@@ -97,6 +97,7 @@ uv run notion db show "Database Name"
    - `filters.py`: Advanced filter parsing and Notion API conversion
    - `notion_data.py`: Data format conversion between CLI and Notion API
    - `views.py`: Saved view management with JSON storage
+   - `formatters.py`: Output formatting utilities for both Rich and JSON modes
 
 ### Key Dependencies
 
@@ -143,6 +144,23 @@ uv run notion db show "Database Name"
 - Advanced filter parsing with logical operators (AND, OR, NOT)
 - Support for text matching, list operations, date/number comparisons
 - Automatic conversion to Notion API filter format
+
+### JSON Output Mode
+- All commands support `--json` flag for machine-readable output
+- JSON is pretty-printed with 2-space indentation to stdout
+- Errors are written to stderr (plain text), data to stdout (JSON)
+- Interactive prompts are automatically disabled in JSON mode
+- Use `OutputFormatter` class in `formatters.py` for consistent formatting
+- Use `handle_error()` function for consistent error handling across JSON and Rich modes
+- In JSON mode, all `console.print()`, `console.status()`, and progress indicators are suppressed
+- Pass `interactive=not json_output` to `resolve_database_name()` and `resolve_view_name()`
+- Key implementation pattern:
+  ```python
+  if json_output:
+      OutputFormatter.output_json({"key": "value"})
+  else:
+      console.print("✅ Success message", style="green")
+  ```
 
 ## Error Handling Patterns
 

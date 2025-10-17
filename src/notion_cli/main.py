@@ -14,6 +14,7 @@ from rich.table import Table
 from .client import NotionClientWrapper
 from .config import ConfigManager
 from .filters import FilterParser, NotionFilterConverter
+from .formatters import OutputFormatter, handle_error, output_result
 from .llm import get_default_llm_service
 from .notion_data import NotionDataConverter
 from .views import DatabaseView, ViewsManager
@@ -81,6 +82,7 @@ def resolve_view_name(name: str, interactive: bool = True) -> DatabaseView | Non
 @auth_app.command("setup")
 def setup_auth(
     token: str = typer.Option(..., "--token", "-t", help="Notion integration token"),
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
 ) -> None:
     """Set up authentication with Notion integration token."""
     try:
@@ -90,91 +92,86 @@ def setup_auth(
         # Test the connection
         client = NotionClientWrapper(config_manager)
         if client.test_connection():
-            console.print("✅ Authentication successful!", style="green")
-            console.print(f"Config saved to: {config_manager.config_path}")
+            if json_output:
+                OutputFormatter.output_json({
+                    "success": True,
+                    "config_path": str(config_manager.config_path)
+                })
+            else:
+                console.print("✅ Authentication successful!", style="green")
+                console.print(f"Config saved to: {config_manager.config_path}")
         else:
-            console.print(
-                "❌ Authentication failed. Please check your token.",
-                style="red",
-            )
+            handle_error("Authentication failed. Please check your token.", json_mode=json_output, console=console)
 
     except Exception as e:
-        console.print(f"❌ Error: {e}", style="red")
-        raise typer.Exit(1)
+        handle_error(f"Error: {e}", json_mode=json_output, console=console)
 
 
 @auth_app.command("test")
-def test_auth() -> None:
+def test_auth(
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
+) -> None:
     """Test the current authentication."""
     try:
         client = NotionClientWrapper()
         if client.test_connection():
-            console.print("✅ Authentication is working!", style="green")
+            if json_output:
+                OutputFormatter.output_json({"authenticated": True})
+            else:
+                console.print("✅ Authentication is working!", style="green")
         else:
-            console.print("❌ Authentication failed.", style="red")
-            raise typer.Exit(1)
+            handle_error("Authentication failed.", json_mode=json_output, console=console)
 
     except ValueError as e:
-        console.print(f"❌ {e}", style="red")
-        raise typer.Exit(1)
+        handle_error(str(e), json_mode=json_output, console=console)
     except Exception as e:
-        console.print(f"❌ Error: {e}", style="red")
-        raise typer.Exit(1)
+        handle_error(f"Error: {e}", json_mode=json_output, console=console)
 
 
 @db_app.command("list")
-def list_databases() -> None:
+def list_databases(
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
+) -> None:
     """List all accessible databases."""
     try:
         client = NotionClientWrapper()
         databases = client.list_databases()
 
         if not databases:
-            console.print("No databases found.", style="yellow")
+            if json_output:
+                OutputFormatter.output_json({"databases": []})
+            else:
+                console.print("No databases found.", style="yellow")
             return
 
-        table = Table(title="Notion Databases")
-        table.add_column("Name", style="cyan")
-        table.add_column("ID", style="magenta")
-        table.add_column("URL", style="blue")
+        # Format output
+        output = OutputFormatter.format_databases(databases, as_json=json_output)
 
-        for db in databases:
-            # Extract database title
-            title = "Untitled"
-            if "title" in db and db["title"]:
-                if isinstance(db["title"], list) and db["title"]:
-                    title = db["title"][0].get("plain_text", "Untitled")
-                elif isinstance(db["title"], str):
-                    title = db["title"]
-
-            # Get database ID and URL
-            db_id = db.get("id", "")
-            db_url = db.get("url", "")
-
-            table.add_row(title, db_id, db_url)
-
-        console.print(table)
+        if json_output:
+            OutputFormatter.output_json(output)
+        else:
+            console.print(output)
 
     except ValueError as e:
-        console.print(f"❌ {e}", style="red")
-        raise typer.Exit(1)
+        handle_error(str(e), json_mode=json_output, console=console)
     except Exception as e:
-        console.print(f"❌ Error: {e}", style="red")
-        raise typer.Exit(1)
+        handle_error(f"Error: {e}", json_mode=json_output, console=console)
 
 
 @db_app.command("set-default")
 def set_default_database(
     database_name: str = typer.Argument(..., help="Database name to set as default"),
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
 ) -> None:
     """Set a default database for commands."""
     try:
         # Check if database exists (using prefix matching)
-        database = resolve_database_name(database_name)
+        database = resolve_database_name(database_name, interactive=not json_output)
         if not database:
-            console.print(f"❌ Database '{database_name}' not found.", style="red")
-            console.print("Use 'notion db list' to see available databases.", style="yellow")
-            raise typer.Exit(1)
+            msg = f"Database '{database_name}' not found."
+            if not json_output:
+                console.print("Use 'notion db list' to see available databases.", style="yellow")
+            handle_error(msg, json_mode=json_output, console=console)
 
         # Extract the actual database title for setting default
         resolved_database_name = ""
@@ -186,26 +183,40 @@ def set_default_database(
 
         config_manager = ConfigManager()
         config_manager.set_default_database(resolved_database_name)
-        console.print(f"✅ Default database set to: {resolved_database_name}", style="green")
+
+        if json_output:
+            OutputFormatter.output_json(
+                {"success": True, "default_database": resolved_database_name}
+            )
+        else:
+            console.print(
+                f"✅ Default database set to: {resolved_database_name}", style="green"
+            )
     except Exception as e:
-        console.print(f"❌ Error setting default database: {e}", style="red")
-        raise typer.Exit(1)
+        handle_error(f"Error setting default database: {e}", json_mode=json_output, console=console)
 
 
 @db_app.command("get-default")
-def get_default_database() -> None:
+def get_default_database(
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
+) -> None:
     """Show the current default database."""
     try:
         config_manager = ConfigManager()
         default_db = config_manager.get_default_database()
-        if default_db:
-            console.print(f"Default database: {default_db}", style="green")
+
+        if json_output:
+            OutputFormatter.output_json({"default_database": default_db})
         else:
-            console.print("No default database set.", style="yellow")
-            console.print("Set one with: notion db set-default <database_name>", style="dim")
+            if default_db:
+                console.print(f"Default database: {default_db}", style="green")
+            else:
+                console.print("No default database set.", style="yellow")
+                console.print(
+                    "Set one with: notion db set-default <database_name>", style="dim"
+                )
     except Exception as e:
-        console.print(f"❌ Error getting default database: {e}", style="red")
-        raise typer.Exit(1)
+        handle_error(f"Error getting default database: {e}", json_mode=json_output, console=console)
 
 
 @db_app.command("show")
@@ -236,22 +247,21 @@ def show_database(
         "--save-view",
         help="Save current view with the given name",
     ),
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
 ) -> None:
     """Show entries in a specific database by name."""
     # Get database name or use default
     name = get_database_name_or_default(name)
 
     try:
-        database = resolve_database_name(name)
+        database = resolve_database_name(name, interactive=not json_output)
         client = NotionClientWrapper()
 
         if not database:
-            console.print(f"❌ Database '{name}' not found.", style="red")
-            console.print(
-                "Use 'notion db list' to see available databases.",
-                style="yellow",
-            )
-            raise typer.Exit(1)
+            msg = f"Database '{name}' not found."
+            if not json_output:
+                console.print("Use 'notion db list' to see available databases.", style="yellow")
+            handle_error(msg, json_mode=json_output, console=console)
 
         # Get database info
         db_title = "Untitled"
@@ -264,7 +274,11 @@ def show_database(
         # Get database properties
         properties = database.get("properties", {})
         if not properties:
-            console.print("No properties found in database schema.", style="yellow")
+            msg = "No properties found in database schema."
+            if json_output:
+                handle_error(msg, json_mode=json_output, console=console)
+            else:
+                console.print(msg, style="yellow")
             return
 
         # Parse filter if provided
@@ -275,27 +289,29 @@ def show_database(
                 converter = NotionFilterConverter()
                 parsed_filters = parser.parse(filter_expr)
                 filter_conditions = converter.convert(parsed_filters, properties)
-                msg = f"\n📋 Database: {db_title} (filtered)"
-                console.print(msg, style="bold cyan")
+                if not json_output:
+                    msg = f"\n📋 Database: {db_title} (filtered)"
+                    console.print(msg, style="bold cyan")
 
-                # Display database URL for filtered view too
-                database_url = database.get("url", "")
-                if database_url:
-                    console.print(
-                        f"🔗 Database URL: [link={database_url}]{database_url}[/link]", style="blue"
-                    )
+                    # Display database URL for filtered view too
+                    database_url = database.get("url", "")
+                    if database_url:
+                        console.print(
+                            f"🔗 Database URL: [link={database_url}]{database_url}[/link]", style="blue"
+                        )
             except Exception as e:
-                console.print(f"❌ Filter error: {e}", style="red")
-                raise typer.Exit(1)
+                handle_error(f"Filter error: {e}", json_mode=json_output, console=console)
         else:
-            console.print(f"\n📋 Database: {db_title}", style="bold cyan")
+            if not json_output:
+                console.print(f"\n📋 Database: {db_title}", style="bold cyan")
 
         # Display database URL
-        database_url = database.get("url", "")
-        if database_url:
-            console.print(
-                f"🔗 Database URL: [link={database_url}]{database_url}[/link]", style="blue"
-            )
+        if not json_output:
+            database_url = database.get("url", "")
+            if database_url:
+                console.print(
+                    f"🔗 Database URL: [link={database_url}]{database_url}[/link]", style="blue"
+                )
 
         # Get all entries with filtering applied (no limit yet)
         all_entries = client.get_database_entries(database_id, None, filter_conditions)
@@ -303,13 +319,32 @@ def show_database(
         # Apply limit after filtering
         if limit is not None:
             entries = all_entries[:limit]
-            console.print(f"Showing {len(entries)} of {len(all_entries)} entries:\n")
+            if not json_output:
+                console.print(f"Showing {len(entries)} of {len(all_entries)} entries:\n")
         else:
             entries = all_entries
-            console.print(f"Showing all {len(entries)} entries:\n")
+            if not json_output:
+                console.print(f"Showing all {len(entries)} entries:\n")
 
         if not entries:
-            console.print("No entries found in this database.", style="yellow")
+            if json_output:
+                # Output empty result in JSON mode
+                OutputFormatter.output_json({
+                    "database": {
+                        "id": database_id,
+                        "title": db_title,
+                        "url": database.get("url", ""),
+                    },
+                    "entries": [],
+                    "metadata": {
+                        "total_count": 0,
+                        "limit": limit,
+                        "filter": filter_expr,
+                        "columns": columns,
+                    }
+                })
+            else:
+                console.print("No entries found in this database.", style="yellow")
             return
 
         # Parse user-specified columns
@@ -328,10 +363,53 @@ def show_database(
         )
 
         if not displayed_props:
-            console.print("No suitable columns found to display.", style="yellow")
+            msg = "No suitable columns found to display."
+            if json_output:
+                handle_error(msg, json_mode=json_output, console=console)
+            else:
+                console.print(msg, style="yellow")
             return
 
-        # Create table with dynamic columns
+        # Handle JSON output mode
+        if json_output:
+            # Convert entries to simple format
+            json_entries = []
+            for entry in entries:
+                entry_data = {
+                    "id": entry.get("id", ""),
+                    "url": entry.get("url", ""),
+                    "properties": {},
+                }
+
+                entry_properties = entry.get("properties", {})
+                for prop_name in displayed_props:
+                    if prop_name in entry_properties:
+                        prop_data = entry_properties[prop_name]
+                        # Use formatter's simple property extraction
+                        simplified = OutputFormatter._extract_simple_properties({prop_name: prop_data})
+                        entry_data["properties"][prop_name] = simplified.get(prop_name)
+
+                json_entries.append(entry_data)
+
+            # Output JSON
+            OutputFormatter.output_json({
+                "database": {
+                    "id": database_id,
+                    "title": db_title,
+                    "url": database.get("url", ""),
+                },
+                "entries": json_entries,
+                "metadata": {
+                    "total_count": len(all_entries),
+                    "shown_count": len(entries),
+                    "limit": limit,
+                    "filter": filter_expr,
+                    "columns": user_columns if user_columns else list(displayed_props),
+                }
+            })
+            return
+
+        # Create table with dynamic columns (Rich output only)
         entries_table = Table(title=f"Entries from '{db_title}'")
 
         # Add columns with calculated widths
@@ -457,92 +535,93 @@ def show_database(
             console.print("💡 Use --columns to specify custom columns", style="dim")
 
     except ValueError as e:
-        console.print(f"❌ {e}", style="red")
-        raise typer.Exit(1)
+        handle_error(str(e), json_mode=json_output, console=console)
     except Exception as e:
-        console.print(f"❌ Error: {e}", style="red")
-        raise typer.Exit(1)
+        handle_error(f"Error: {e}", json_mode=json_output, console=console)
 
 
 # View management commands
 
 
 @view_app.command("list")
-def list_views() -> None:
+def list_views(
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
+) -> None:
     """List all saved views."""
     try:
         views_manager = ViewsManager()
         views = views_manager.list_views()
 
         if not views:
-            console.print("No saved views found.", style="yellow")
+            if json_output:
+                OutputFormatter.output_json({"views": []})
+            else:
+                console.print("No saved views found.", style="yellow")
             return
 
-        table = Table(title="Saved Views")
-        table.add_column("Name", style="cyan")
-        table.add_column("Database", style="green")
-        table.add_column("Columns", style="blue")
-        table.add_column("Filter", style="magenta")
-        table.add_column("Limit", style="white")
+        # Format output
+        output = OutputFormatter.format_views(views, as_json=json_output)
 
-        for view in views:
-            columns_str = ", ".join(view.columns) if view.columns else "All"
-            filter_str = view.filter_expr if view.filter_expr else "None"
-            limit_str = str(view.limit) if view.limit else "All"
-
-            table.add_row(
-                view.name,
-                view.database_name,
-                columns_str,
-                filter_str,
-                limit_str,
-            )
-
-        console.print(table)
+        if json_output:
+            OutputFormatter.output_json(output)
+        else:
+            console.print(output)
 
     except Exception as e:
-        console.print(f"❌ Error: {e}", style="red")
-        raise typer.Exit(1)
+        handle_error(f"Error: {e}", json_mode=json_output, console=console)
 
 
 @view_app.command("set-default")
 def set_default_view(
     view_name: str = typer.Argument(..., help="View name to set as default"),
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
 ) -> None:
     """Set a default view for commands."""
     try:
         # Check if view exists (using prefix matching)
-        view = resolve_view_name(view_name)
+        view = resolve_view_name(view_name, interactive=not json_output)
         if not view:
-            console.print(f"❌ View '{view_name}' not found.", style="red")
-            console.print("Use 'notion view list' to see available views.", style="yellow")
-            raise typer.Exit(1)
+            msg = f"View '{view_name}' not found."
+            if not json_output:
+                console.print("Use 'notion view list' to see available views.", style="yellow")
+            handle_error(msg, json_mode=json_output, console=console)
 
         # Use the resolved view name for setting default
         resolved_view_name = view.name
 
         config_manager = ConfigManager()
         config_manager.set_default_view(resolved_view_name)
-        console.print(f"✅ Default view set to: {resolved_view_name}", style="green")
+
+        if json_output:
+            OutputFormatter.output_json({
+                "success": True,
+                "default_view": resolved_view_name
+            })
+        else:
+            console.print(f"✅ Default view set to: {resolved_view_name}", style="green")
     except Exception as e:
-        console.print(f"❌ Error setting default view: {e}", style="red")
-        raise typer.Exit(1)
+        handle_error(f"Error setting default view: {e}", json_mode=json_output, console=console)
 
 
 @view_app.command("get-default")
-def get_default_view() -> None:
+def get_default_view(
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
+) -> None:
     """Show the current default view."""
     try:
         config_manager = ConfigManager()
         default_view = config_manager.get_default_view()
-        if default_view:
-            console.print(f"Default view: {default_view}", style="green")
+
+        if json_output:
+            OutputFormatter.output_json({"default_view": default_view})
         else:
-            console.print("No default view set.", style="yellow")
-            console.print("Set one with: notion view set-default <view_name>", style="dim")
+            if default_view:
+                console.print(f"Default view: {default_view}", style="green")
+            else:
+                console.print("No default view set.", style="yellow")
+                console.print("Set one with: notion view set-default <view_name>", style="dim")
     except Exception as e:
-        console.print(f"❌ Error getting default view: {e}", style="red")
-        raise typer.Exit(1)
+        handle_error(f"Error getting default view: {e}", json_mode=json_output, console=console)
 
 
 @view_app.command("show")
@@ -550,24 +629,26 @@ def show_view(
     view_name: str | None = typer.Argument(
         None, help="Name of the view to show (uses default if not specified)"
     ),
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
 ) -> None:
     """Show a database using a saved view."""
     # Get view name or use default
     view_name = get_view_name_or_default(view_name)
 
     try:
-        view = resolve_view_name(view_name)
+        view = resolve_view_name(view_name, interactive=not json_output)
 
         if not view:
-            console.print(f"❌ View '{view_name}' not found.", style="red")
-            msg = "Use 'notion view list' to see available views."
-            console.print(msg, style="yellow")
-            raise typer.Exit(1)
+            msg = f"View '{view_name}' not found."
+            if not json_output:
+                console.print("Use 'notion view list' to see available views.", style="yellow")
+            handle_error(msg, json_mode=json_output, console=console)
 
-        # Show view information
-        console.print(f"\n👁️  View: {view.name}", style="bold magenta")
-        if view.description:
-            console.print(f"📝 Description: {view.description}", style="dim")
+        # Show view information (Rich mode only)
+        if not json_output:
+            console.print(f"\n👁️  View: {view.name}", style="bold magenta")
+            if view.description:
+                console.print(f"📝 Description: {view.description}", style="dim")
 
         # Call the show_database function with the view's parameters
         show_database(
@@ -576,30 +657,35 @@ def show_view(
             columns=", ".join(view.columns) if view.columns else None,
             filter_expr=view.filter_expr,
             save_view=None,  # Don't save when loading a view
+            json_output=json_output,
         )
 
     except Exception as e:
-        console.print(f"❌ Error: {e}", style="red")
-        raise typer.Exit(1)
+        handle_error(f"Error: {e}", json_mode=json_output, console=console)
 
 
 @view_app.command("delete")
 def delete_view(
     view_name: str = typer.Argument(..., help="Name of the view to delete"),
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
 ) -> None:
     """Delete a saved view."""
     try:
         views_manager = ViewsManager()
 
         if views_manager.delete_view(view_name):
-            console.print(f"✅ View '{view_name}' deleted successfully!", style="green")
+            if json_output:
+                OutputFormatter.output_json({
+                    "success": True,
+                    "deleted_view": view_name
+                })
+            else:
+                console.print(f"✅ View '{view_name}' deleted successfully!", style="green")
         else:
-            console.print(f"❌ View '{view_name}' not found.", style="red")
-            raise typer.Exit(1)
+            handle_error(f"View '{view_name}' not found.", json_mode=json_output, console=console)
 
     except Exception as e:
-        console.print(f"❌ Error: {e}", style="red")
-        raise typer.Exit(1)
+        handle_error(f"Error: {e}", json_mode=json_output, console=console)
 
 
 @view_app.command("update")
@@ -638,6 +724,7 @@ def update_view(
         "--clear-limit",
         help="Clear the limit (show all entries)",
     ),
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
 ) -> None:
     """Update an existing saved view with new filters, columns, or limits."""
     try:
@@ -645,12 +732,10 @@ def update_view(
         view = views_manager.load_view(view_name)
 
         if not view:
-            console.print(f"❌ View '{view_name}' not found.", style="red")
-            console.print(
-                "Use 'notion view list' to see available views.",
-                style="yellow",
-            )
-            raise typer.Exit(1)
+            msg = f"View '{view_name}' not found."
+            if not json_output:
+                console.print("Use 'notion view list' to see available views.", style="yellow")
+            handle_error(msg, json_mode=json_output, console=console)
 
         # Track what's being updated
         updates = []
@@ -680,39 +765,48 @@ def update_view(
             updates.append(f"set limit to: {limit}")
 
         if not updates:
-            console.print(
-                "❌ No updates specified. Use --columns, --filter, --limit, or "
-                "their --clear-variants.",
-                style="red",
+            handle_error(
+                "No updates specified. Use --columns, --filter, --limit, or their --clear-variants.",
+                json_mode=json_output,
+                console=console
             )
-            raise typer.Exit(1)
 
         # Save the updated view
         views_manager.save_view(view)
 
-        # Show what was updated
-        console.print(f"✅ View '{view_name}' updated successfully!", style="green")
-        for update in updates:
-            console.print(f"  • {update}", style="dim")
+        if json_output:
+            OutputFormatter.output_json({
+                "success": True,
+                "view": {
+                    "name": view.name,
+                    "columns": view.columns,
+                    "filter": view.filter_expr,
+                    "limit": view.limit
+                }
+            })
+        else:
+            # Show what was updated
+            console.print(f"✅ View '{view_name}' updated successfully!", style="green")
+            for update in updates:
+                console.print(f"  • {update}", style="dim")
 
-        # Show the updated view details
-        console.print(f"\n📋 Updated view '{view_name}':", style="bold cyan")
-        columns_str = ", ".join(view.columns) if view.columns else "All"
-        filter_str = view.filter_expr if view.filter_expr else "None"
-        limit_str = str(view.limit) if view.limit else "All"
+            # Show the updated view details
+            console.print(f"\n📋 Updated view '{view_name}':", style="bold cyan")
+            columns_str = ", ".join(view.columns) if view.columns else "All"
+            filter_str = view.filter_expr if view.filter_expr else "None"
+            limit_str = str(view.limit) if view.limit else "All"
 
-        console.print(f"  Database: {view.database_name}")
-        console.print(f"  Columns: {columns_str}")
-        console.print(f"  Filter: {filter_str}")
-        console.print(f"  Limit: {limit_str}")
+            console.print(f"  Database: {view.database_name}")
+            console.print(f"  Columns: {columns_str}")
+            console.print(f"  Filter: {filter_str}")
+            console.print(f"  Limit: {limit_str}")
 
-        # Ask if user wants to view the updated results
-        if typer.confirm("\n👀 Show the updated view?"):
-            show_view(view_name)
+            # Ask if user wants to view the updated results
+            if typer.confirm("\n👀 Show the updated view?"):
+                show_view(view_name)
 
     except Exception as e:
-        console.print(f"❌ Error: {e}", style="red")
-        raise typer.Exit(1)
+        handle_error(f"Error: {e}", json_mode=json_output, console=console)
 
 
 # LLM-powered database entry commands
@@ -751,28 +845,36 @@ def create_entry(
         "-f",
         help="File paths to upload and attach to entry",
     ),
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
 ) -> None:
     """Create a new database entry using natural language."""
+    # Check for incompatible flags
+    if json_output and interactive:
+        handle_error(
+            "Cannot use --interactive with --json flag",
+            json_mode=json_output,
+            console=console
+        )
+
     # Get database name or use default
     database_name = get_database_name_or_default(database_name)
 
     try:
-        database = resolve_database_name(database_name)
+        database = resolve_database_name(database_name, interactive=not json_output)
         client = NotionClientWrapper()
 
         if not database:
-            console.print(f"❌ Database '{database_name}' not found.", style="red")
-            console.print(
-                "Use 'notion db list' to see available databases.",
-                style="yellow",
-            )
-            raise typer.Exit(1)
+            msg = f"Database '{database_name}' not found."
+            if not json_output:
+                console.print("Use 'notion db list' to see available databases.", style="yellow")
+            handle_error(msg, json_mode=json_output, console=console)
 
         database_id = database.get("id", "")
         properties = database.get("properties", {})
 
-        console.print(f"🤖 Generating entry for database: {database_name}")
-        console.print(f"📝 Prompt: {prompt}")
+        if not json_output:
+            console.print(f"🤖 Generating entry for database: {database_name}")
+            console.print(f"📝 Prompt: {prompt}")
 
         # Get LLM service
         llm_service = get_default_llm_service()
@@ -780,15 +882,25 @@ def create_entry(
             llm_service.config.model = model
 
         # Generate structured data
-        with console.status("🧠 Processing with LLM..."):
+        if json_output:
             schema = llm_service._create_notion_schema(properties)
             structured_data = llm_service.generate_structured_data(
                 prompt=prompt,
                 schema=schema,
                 context=f"Creating entry in Notion database '{database_name}'",
-                allow_revision=interactive,
+                allow_revision=False,  # Never allow revision in JSON mode
                 files=files,
             )
+        else:
+            with console.status("🧠 Processing with LLM..."):
+                schema = llm_service._create_notion_schema(properties)
+                structured_data = llm_service.generate_structured_data(
+                    prompt=prompt,
+                    schema=schema,
+                    context=f"Creating entry in Notion database '{database_name}'",
+                    allow_revision=interactive,
+                    files=files,
+                )
 
         # Handle file uploads if files were provided
         if files:
@@ -798,12 +910,15 @@ def create_entry(
             ]
 
             if file_properties:
-                with console.status(f"📁 Uploading {len(files)} file(s) to Notion..."):
+                if json_output:
                     file_data = client.prepare_file_properties(files, file_properties)
-                console.print(
-                    f"✅ Successfully uploaded {len(files)} file(s)!",
-                    style="green",
-                )
+                else:
+                    with console.status(f"📁 Uploading {len(files)} file(s) to Notion..."):
+                        file_data = client.prepare_file_properties(files, file_properties)
+                    console.print(
+                        f"✅ Successfully uploaded {len(files)} file(s)!",
+                        style="green",
+                    )
 
                 # Update structured data with actual file objects
                 for prop_name, file_objects in file_data.items():
@@ -816,46 +931,56 @@ def create_entry(
         )
 
         if not notion_properties:
-            console.print("❌ No valid properties generated from prompt.", style="red")
-            raise typer.Exit(1)
+            handle_error("No valid properties generated from prompt.", json_mode=json_output, console=console)
 
-        # Show summary
-        console.print("\n📋 Entry Summary:", style="bold cyan")
-        table = Table(show_header=True, header_style="bold magenta")
-        table.add_column("Property", style="cyan")
-        table.add_column("Value", style="white")
+        # Show summary (Rich mode only)
+        if not json_output:
+            console.print("\n📋 Entry Summary:", style="bold cyan")
+            table = Table(show_header=True, header_style="bold magenta")
+            table.add_column("Property", style="cyan")
+            table.add_column("Value", style="white")
 
-        for prop_name, value in structured_data.items():
-            if value is not None:
-                display_value = str(value)
-                if isinstance(value, list):
-                    display_value = ", ".join(str(v) for v in value)
-                table.add_row(prop_name, display_value)
+            for prop_name, value in structured_data.items():
+                if value is not None:
+                    display_value = str(value)
+                    if isinstance(value, list):
+                        display_value = ", ".join(str(v) for v in value)
+                    table.add_row(prop_name, display_value)
 
-        console.print(table)
+            console.print(table)
 
-        # Confirm creation
-        if not auto_confirm:
+        # Confirm creation (skip in JSON mode or with auto_confirm)
+        if not json_output and not auto_confirm:
             confirm = typer.confirm("\n✨ Create this entry?")
             if not confirm:
                 console.print("❌ Entry creation cancelled.", style="yellow")
                 return
 
         # Create the entry
-        with console.status("📝 Creating entry..."):
+        if json_output:
             result = client.create_page(database_id, notion_properties)
+        else:
+            with console.status("📝 Creating entry..."):
+                result = client.create_page(database_id, notion_properties)
 
         entry_id = result.get("id", "")
         entry_url = result.get("url", "")
 
-        console.print("✅ Entry created successfully!", style="green")
-        console.print(f"🆔 Entry ID: {entry_id}")
-        if entry_url:
-            console.print(f"🔗 URL: {entry_url}")
+        if json_output:
+            OutputFormatter.output_json({
+                "success": True,
+                "entry_id": entry_id,
+                "url": entry_url,
+                "properties": structured_data,
+            })
+        else:
+            console.print("✅ Entry created successfully!", style="green")
+            console.print(f"🆔 Entry ID: {entry_id}")
+            if entry_url:
+                console.print(f"🔗 URL: {entry_url}")
 
     except Exception as e:
-        console.print(f"❌ Error: {e}", style="red")
-        raise typer.Exit(1)
+        handle_error(f"Error: {e}", json_mode=json_output, console=console)
 
 
 @db_app.command("edit")
@@ -885,28 +1010,28 @@ def edit_entries(
         "-f",
         help="File paths to upload and attach to entries",
     ),
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
 ) -> None:
     """Edit database entries using natural language."""
     # Get database name or use default
     database_name = get_database_name_or_default(database_name)
 
     try:
-        database = resolve_database_name(database_name)
+        database = resolve_database_name(database_name, interactive=not json_output)
         client = NotionClientWrapper()
 
         if not database:
-            console.print(f"❌ Database '{database_name}' not found.", style="red")
-            console.print(
-                "Use 'notion db list' to see available databases.",
-                style="yellow",
-            )
-            raise typer.Exit(1)
+            msg = f"Database '{database_name}' not found."
+            if not json_output:
+                console.print("Use 'notion db list' to see available databases.", style="yellow")
+            handle_error(msg, json_mode=json_output, console=console)
 
         database_id = database.get("id", "")
         properties = database.get("properties", {})
 
-        console.print(f"🤖 Processing edit request for database: {database_name}")
-        console.print(f"📝 Prompt: {prompt}")
+        if not json_output:
+            console.print(f"🤖 Processing edit request for database: {database_name}")
+            console.print(f"📝 Prompt: {prompt}")
 
         # Get LLM service
         llm_service = get_default_llm_service()
@@ -914,13 +1039,18 @@ def edit_entries(
             llm_service.config.model = model
 
         # Generate filter from prompt
-        with console.status("🧠 Analyzing prompt to find entries..."):
+        if json_output:
             filter_expression = llm_service.generate_filters_from_prompt(
                 prompt,
                 properties,
             )
-
-        console.print(f"🔍 Generated filter: {filter_expression}")
+        else:
+            with console.status("🧠 Analyzing prompt to find entries..."):
+                filter_expression = llm_service.generate_filters_from_prompt(
+                    prompt,
+                    properties,
+                )
+            console.print(f"🔍 Generated filter: {filter_expression}")
 
         # Parse and apply filter
         if filter_expression and filter_expression.lower() != "none":
@@ -930,76 +1060,98 @@ def edit_entries(
                 parsed_filters = parser.parse(filter_expression)
                 filter_conditions = converter.convert(parsed_filters, properties)
             except Exception as e:
-                console.print(f"⚠️ Filter parsing failed: {e}", style="yellow")
+                if not json_output:
+                    console.print(f"⚠️ Filter parsing failed: {e}", style="yellow")
                 filter_conditions = None
         else:
             filter_conditions = None
 
         # Get entries to edit
-        with console.status("📊 Fetching entries..."):
+        if json_output:
             entries = client.get_database_entries(database_id, 10, filter_conditions)
+        else:
+            with console.status("📊 Fetching entries..."):
+                entries = client.get_database_entries(database_id, 10, filter_conditions)
 
         if not entries:
-            console.print("❌ No entries found matching the criteria.", style="red")
-            return
+            msg = "No entries found matching the criteria."
+            if json_output:
+                OutputFormatter.output_json({
+                    "success": False,
+                    "updated_count": 0,
+                    "entries": []
+                })
+                return
+            else:
+                console.print(f"❌ {msg}", style="red")
+                return
 
-        console.print(f"📊 Found {len(entries)} entries to potentially edit")
+        if not json_output:
+            console.print(f"📊 Found {len(entries)} entries to potentially edit")
 
-        # Show entries that will be affected
-        table = Table(title="Entries to Edit")
-        table.add_column("Index", style="cyan")
-        table.add_column("ID", style="dim")
+        # Show entries that will be affected (Rich mode only)
+        if not json_output:
+            table = Table(title="Entries to Edit")
+            table.add_column("Index", style="cyan")
+            table.add_column("ID", style="dim")
 
-        # Add key columns for identification
-        key_columns = ["Name", "Title", "Task"]
-        displayed_columns = []
-        for col in key_columns:
-            if col in properties:
-                table.add_column(col, style="white")
-                displayed_columns.append(col)
-                break
+            # Add key columns for identification
+            key_columns = ["Name", "Title", "Task"]
+            displayed_columns = []
+            for col in key_columns:
+                if col in properties:
+                    table.add_column(col, style="white")
+                    displayed_columns.append(col)
+                    break
 
-        for i, entry in enumerate(entries):
-            entry_props = entry.get("properties", {})
-            row = [str(i + 1), entry.get("id", "")[:8] + "..."]
+            for i, entry in enumerate(entries):
+                entry_props = entry.get("properties", {})
+                row = [str(i + 1), entry.get("id", "")[:8] + "..."]
 
-            for col in displayed_columns:
-                if col in entry_props:
-                    value = client.extract_property_value(entry_props[col])
-                    row.append(value or "—")
-                else:
-                    row.append("—")
+                for col in displayed_columns:
+                    if col in entry_props:
+                        value = client.extract_property_value(entry_props[col])
+                        row.append(value or "—")
+                    else:
+                        row.append("—")
 
-            table.add_row(*row)
+                table.add_row(*row)
 
-        console.print(table)
+            console.print(table)
 
         # Generate updates
-        with console.status("🧠 Generating updates..."):
+        if json_output:
             update_data = llm_service.generate_updates_from_prompt(
                 prompt,
                 properties,
                 files=files if files else None,
             )
+        else:
+            with console.status("🧠 Generating updates..."):
+                update_data = llm_service.generate_updates_from_prompt(
+                    prompt,
+                    properties,
+                    files=files if files else None,
+                )
 
         if not update_data:
-            console.print("❌ No valid updates generated from prompt.", style="red")
-            return
+            handle_error("No valid updates generated from prompt.", json_mode=json_output, console=console)
 
-        # Show update summary
-        console.print("\n📝 Planned Updates:", style="bold cyan")
-        update_table = Table(show_header=True, header_style="bold magenta")
-        update_table.add_column("Property", style="cyan")
-        update_table.add_column("New Value", style="white")
+        # Show update summary (Rich mode only)
+        if not json_output:
+            console.print("\n📝 Planned Updates:", style="bold cyan")
+            update_table = Table(show_header=True, header_style="bold magenta")
+            update_table.add_column("Property", style="cyan")
+            update_table.add_column("New Value", style="white")
 
-        for prop_name, value in update_data.items():
-            if value is not None:
-                display_value = str(value)
-                if isinstance(value, list):
-                    display_value = ", ".join(str(v) for v in value)
-                update_table.add_row(prop_name, display_value)
+            for prop_name, value in update_data.items():
+                if value is not None:
+                    display_value = str(value)
+                    if isinstance(value, list):
+                        display_value = ", ".join(str(v) for v in value)
+                    update_table.add_row(prop_name, display_value)
 
-        console.print(update_table)
+            console.print(update_table)
 
         # Handle file uploads if files were provided
         if files:
@@ -1009,19 +1161,22 @@ def edit_entries(
             ]
 
             if file_properties:
-                with console.status(f"📁 Uploading {len(files)} file(s) to Notion..."):
+                if json_output:
                     file_data = client.prepare_file_properties(files, file_properties)
-                console.print(
-                    f"✅ Successfully uploaded {len(files)} file(s)!",
-                    style="green",
-                )
+                else:
+                    with console.status(f"📁 Uploading {len(files)} file(s) to Notion..."):
+                        file_data = client.prepare_file_properties(files, file_properties)
+                    console.print(
+                        f"✅ Successfully uploaded {len(files)} file(s)!",
+                        style="green",
+                    )
 
                 # Update structured data with actual file objects
                 for prop_name, file_objects in file_data.items():
                     update_data[prop_name] = file_objects
 
-        # Confirm updates
-        if not auto_confirm:
+        # Confirm updates (skip in JSON mode or with auto_confirm)
+        if not json_output and not auto_confirm:
             console.print(
                 f"\n⚠️ This will update {len(entries)} entries",
                 style="yellow",
@@ -1039,25 +1194,50 @@ def edit_entries(
 
         # Apply updates
         success_count = 0
-        with console.status("📝 Applying updates..."):
+        updated_entries = []
+
+        if json_output:
             for entry in entries:
                 try:
                     client.update_page(entry["id"], notion_updates)
                     success_count += 1
-                except Exception as e:
-                    console.print(
-                        f"⚠️ Failed to update entry {entry['id']}: {e}",
-                        style="yellow",
+                    # Extract simple properties for JSON output
+                    entry_props = OutputFormatter._extract_simple_properties(
+                        entry.get("properties", {})
                     )
+                    updated_entries.append({
+                        "id": entry["id"],
+                        "properties": entry_props
+                    })
+                except Exception as e:
+                    # In JSON mode, still try to update other entries
+                    pass
+        else:
+            with console.status("📝 Applying updates..."):
+                for entry in entries:
+                    try:
+                        client.update_page(entry["id"], notion_updates)
+                        success_count += 1
+                    except Exception as e:
+                        console.print(
+                            f"⚠️ Failed to update entry {entry['id']}: {e}",
+                            style="yellow",
+                        )
 
-        console.print(
-            f"✅ Successfully updated {success_count}/{len(entries)} entries!",
-            style="green",
-        )
+        if json_output:
+            OutputFormatter.output_json({
+                "success": True,
+                "updated_count": success_count,
+                "entries": updated_entries
+            })
+        else:
+            console.print(
+                f"✅ Successfully updated {success_count}/{len(entries)} entries!",
+                style="green",
+            )
 
     except Exception as e:
-        console.print(f"❌ Error: {e}", style="red")
-        raise typer.Exit(1)
+        handle_error(f"Error: {e}", json_mode=json_output, console=console)
 
 
 @db_app.command("link")
@@ -1066,21 +1246,20 @@ def get_database_link(
         None, help="Database name to get link for (uses default if not specified)"
     ),
     copy: bool = typer.Option(False, "--copy", "-c", help="Copy the link to clipboard"),
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
 ) -> None:
     """Get the link for a specific database."""
     # Get database name or use default
     database_name = get_database_name_or_default(database_name)
 
     try:
-        database = resolve_database_name(database_name)
+        database = resolve_database_name(database_name, interactive=not json_output)
 
         if not database:
-            console.print(f"❌ Database '{database_name}' not found.", style="red")
-            console.print(
-                "Use 'notion db list' to see available databases.",
-                style="yellow",
-            )
-            raise typer.Exit(1)
+            msg = f"Database '{database_name}' not found."
+            if not json_output:
+                console.print("Use 'notion db list' to see available databases.", style="yellow")
+            handle_error(msg, json_mode=json_output, console=console)
 
         # Extract database title
         title = "Untitled"
@@ -1094,31 +1273,41 @@ def get_database_link(
         db_url = database.get("url", "")
         db_id = database.get("id", "")
 
-        console.print(f"🗃️ Database: {title}", style="bold cyan")
-        console.print(f"🔗 URL: {db_url}", style="blue")
-        console.print(f"📊 Database ID: {db_id}", style="dim")
-
         # Copy to clipboard if requested
+        copied = False
         if copy:
             try:
                 import pyperclip
-
                 pyperclip.copy(db_url)
-                console.print("✅ Link copied to clipboard!", style="green")
+                copied = True
+                if not json_output:
+                    console.print("✅ Link copied to clipboard!", style="green")
             except ImportError:
-                console.print(
-                    "⚠️ pyperclip not installed. Install with: pip install pyperclip",
-                    style="yellow",
-                )
+                if not json_output:
+                    console.print(
+                        "⚠️ pyperclip not installed. Install with: pip install pyperclip",
+                        style="yellow",
+                    )
             except Exception as e:
-                console.print(f"⚠️ Failed to copy to clipboard: {e}", style="yellow")
+                if not json_output:
+                    console.print(f"⚠️ Failed to copy to clipboard: {e}", style="yellow")
+
+        if json_output:
+            OutputFormatter.output_json({
+                "database": title,
+                "id": db_id,
+                "url": db_url,
+                "copied": copied
+            })
+        else:
+            console.print(f"🗃️ Database: {title}", style="bold cyan")
+            console.print(f"🔗 URL: {db_url}", style="blue")
+            console.print(f"📊 Database ID: {db_id}", style="dim")
 
     except ValueError as e:
-        console.print(f"❌ {e}", style="red")
-        raise typer.Exit(1)
+        handle_error(str(e), json_mode=json_output, console=console)
     except Exception as e:
-        console.print(f"❌ Error: {e}", style="red")
-        raise typer.Exit(1)
+        handle_error(f"Error: {e}", json_mode=json_output, console=console)
 
 
 @db_app.command("entry-link")
@@ -1140,20 +1329,19 @@ def get_entry_link(
         "-l",
         help="Maximum number of results to show",
     ),
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
 ) -> None:
     """Get the link for a specific database entry."""
     # Get database name or use default
     database_name = get_database_name_or_default(database_name)
 
     try:
-        database = resolve_database_name(database_name)
+        database = resolve_database_name(database_name, interactive=not json_output)
         if not database:
-            console.print(f"❌ Database '{database_name}' not found.", style="red")
-            console.print(
-                "Use 'notion db list' to see available databases.",
-                style="yellow",
-            )
-            raise typer.Exit(1)
+            msg = f"Database '{database_name}' not found."
+            if not json_output:
+                console.print("Use 'notion db list' to see available databases.", style="yellow")
+            handle_error(msg, json_mode=json_output, console=console)
 
         client = NotionClientWrapper()
         entries = client.get_database_entry_by_name(
@@ -1163,23 +1351,43 @@ def get_entry_link(
         )
 
         if not entries:
-            console.print(
-                f"❌ No entries found matching '{entry_name}' in database '{database_name}'.",
-                style="red",
-            )
-            console.print(
-                f"Use 'notion db show \"{database_name}\"' to see all entries.",
-                style="yellow",
-            )
-            raise typer.Exit(1)
-
-        # If multiple entries found, show them for selection
-        if len(entries) > 1:
-            # Limit results
-            if len(entries) > limit:
-                entries = entries[:limit]
+            msg = f"No entries found matching '{entry_name}' in database '{database_name}'."
+            if not json_output:
                 console.print(
-                    f"📊 Showing top {limit} results (found {len(entries)} total)",
+                    f"Use 'notion db show \"{database_name}\"' to see all entries.",
+                    style="yellow",
+                )
+            handle_error(msg, json_mode=json_output, console=console)
+
+        # Limit results
+        if len(entries) > limit:
+            entries = entries[:limit]
+
+        # Build JSON output if requested
+        if json_output:
+            json_entries = []
+            for entry in entries:
+                title = entry.get("_title", "Untitled")
+                match_score = entry.get("_match_score", 0)
+                entry_id = entry.get("id", "")
+                urls = client.get_entry_urls(entry)
+
+                json_entries.append({
+                    "title": title,
+                    "id": entry_id,
+                    "private_url": urls["private"],
+                    "public_url": urls.get("public"),
+                    "match_score": match_score
+                })
+
+            OutputFormatter.output_json({"entries": json_entries})
+            return
+
+        # Rich output for multiple entries
+        if len(entries) > 1:
+            if len(entries) == limit:
+                console.print(
+                    f"📊 Showing top {limit} results",
                 )
             else:
                 console.print(
@@ -1256,47 +1464,46 @@ def get_entry_link(
                     console.print(f"⚠️ Failed to copy to clipboard: {e}", style="yellow")
 
     except ValueError as e:
-        console.print(f"❌ {e}", style="red")
-        raise typer.Exit(1)
+        handle_error(str(e), json_mode=json_output, console=console)
     except Exception as e:
-        console.print(f"❌ Error: {e}", style="red")
-        raise typer.Exit(1)
+        handle_error(f"Error: {e}", json_mode=json_output, console=console)
 
 
 # Page management commands
 
 
 @page_app.command("list")
-def list_pages() -> None:
+def list_pages(
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
+) -> None:
     """List all accessible pages."""
     try:
         client = NotionClientWrapper()
         pages = client.search_pages()
 
         if not pages:
-            console.print("No pages found.", style="yellow")
+            if json_output:
+                OutputFormatter.output_json({"pages": []})
+            else:
+                console.print("No pages found.", style="yellow")
             return
 
-        table = Table(title="Notion Pages")
-        table.add_column("Name", style="cyan")
-        table.add_column("ID", style="magenta")
-        table.add_column("URL", style="blue")
-
+        # Add _title to pages for consistency
         for page in pages:
-            title = client._extract_page_title(page)
-            page_id = page.get("id", "")
-            page_url = page.get("url", "")
+            page["_title"] = client._extract_page_title(page)
 
-            table.add_row(title, page_id, page_url)
+        # Format output
+        output = OutputFormatter.format_pages(pages, as_json=json_output)
 
-        console.print(table)
+        if json_output:
+            OutputFormatter.output_json(output)
+        else:
+            console.print(output)
 
     except ValueError as e:
-        console.print(f"❌ {e}", style="red")
-        raise typer.Exit(1)
+        handle_error(str(e), json_mode=json_output, console=console)
     except Exception as e:
-        console.print(f"❌ Error: {e}", style="red")
-        raise typer.Exit(1)
+        handle_error(f"Error: {e}", json_mode=json_output, console=console)
 
 
 @page_app.command("find")
@@ -1314,6 +1521,7 @@ def find_page(
         "-l",
         help="Maximum number of results to show",
     ),
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
 ) -> None:
     """Find pages by name and show their links."""
     try:
@@ -1321,14 +1529,38 @@ def find_page(
         pages = client.get_page_by_name(name, fuzzy=not exact)
 
         if not pages:
-            console.print(f"❌ No pages found matching '{name}'.", style="red")
-            console.print("Use 'notion page list' to see all pages.", style="yellow")
-            raise typer.Exit(1)
+            msg = f"No pages found matching '{name}'."
+            if not json_output:
+                console.print("Use 'notion page list' to see all pages.", style="yellow")
+            handle_error(msg, json_mode=json_output, console=console)
 
         # Limit results
         if len(pages) > limit:
             pages = pages[:limit]
-            console.print(f"📄 Showing top {limit} results (found {len(pages)} total)")
+
+        # Build JSON output if requested
+        if json_output:
+            json_pages = []
+            for page in pages:
+                title = page.get("_title", "Untitled")
+                match_score = page.get("_match_score", 0)
+                page_id = page.get("id", "")
+                urls = client.get_page_urls(page)
+
+                json_pages.append({
+                    "title": title,
+                    "id": page_id,
+                    "private_url": urls["private"],
+                    "public_url": urls.get("public"),
+                    "match_score": match_score
+                })
+
+            OutputFormatter.output_json({"pages": json_pages})
+            return
+
+        # Rich output
+        if len(pages) == limit:
+            console.print(f"📄 Showing top {limit} results")
         else:
             console.print(f"📄 Found {len(pages)} page(s) matching '{name}'")
 
@@ -1351,11 +1583,9 @@ def find_page(
                 console.print("   Public URL: Not shared publicly", style="yellow")
 
     except ValueError as e:
-        console.print(f"❌ {e}", style="red")
-        raise typer.Exit(1)
+        handle_error(str(e), json_mode=json_output, console=console)
     except Exception as e:
-        console.print(f"❌ Error: {e}", style="red")
-        raise typer.Exit(1)
+        handle_error(f"Error: {e}", json_mode=json_output, console=console)
 
 
 @page_app.command("create")
@@ -1380,6 +1610,7 @@ def create_page(
         "-p",
         help="The ID of the parent page.",
     ),
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
 ) -> None:
     """Create a new page from a local file."""
     try:
@@ -1390,23 +1621,30 @@ def create_page(
         if parent_page_id:
             parent_id = parent_page_id
         elif parent_page_name:
-            with console.status(f"Searching for parent page '{parent_page_name}'..."):
+            if json_output:
                 pages = client.get_page_by_name(parent_page_name)
-                if not pages:
-                    console.print(
-                        f"❌ Parent page '{parent_page_name}' not found.",
-                        style="red",
-                    )
-                    raise typer.Exit(1)
-                elif len(pages) > 1:
-                    console.print(
-                        f"Multiple pages found with the name '{parent_page_name}'. Please specify by ID.",
-                        style="yellow",
-                    )
-                    # Optionally, you can list the pages here for the user to choose
-                    raise typer.Exit(1)
-                parent_id = pages[0]["id"]
+            else:
+                with console.status(f"Searching for parent page '{parent_page_name}'..."):
+                    pages = client.get_page_by_name(parent_page_name)
+
+            if not pages:
+                handle_error(f"Parent page '{parent_page_name}' not found.", json_mode=json_output, console=console)
+            elif len(pages) > 1:
+                handle_error(
+                    f"Multiple pages found with the name '{parent_page_name}'. Please specify by ID.",
+                    json_mode=json_output,
+                    console=console
+                )
+            parent_id = pages[0]["id"]
         else:
+            # Interactive parent selection not allowed in JSON mode
+            if json_output:
+                handle_error(
+                    "Parent page must be specified with --parent-name or --parent-id in JSON mode",
+                    json_mode=json_output,
+                    console=console
+                )
+
             with console.status("Fetching pages..."):
                 all_pages = client.search_pages()
 
@@ -1441,7 +1679,7 @@ def create_page(
                         break
 
         # Read and convert the file content
-        with console.status("Converting file to Notion format..."):
+        if json_output:
             with open(filepath, encoding="utf-8") as f:
                 md_content = f.read()
 
@@ -1455,28 +1693,53 @@ def create_page(
 
             # Convert markdown to Notion blocks
             children = parse_md(md_content)
+        else:
+            with console.status("Converting file to Notion format..."):
+                with open(filepath, encoding="utf-8") as f:
+                    md_content = f.read()
+
+                # Extract title from the first H1, or use the filename
+                page_title = filepath.stem
+                if md_content.strip().startswith("# "):
+                    title_line = md_content.strip().splitlines()[0]
+                    page_title = title_line.lstrip("# ").strip()
+                    # Remove title from content
+                    md_content = "\n".join(md_content.strip().splitlines()[1:])
+
+                # Convert markdown to Notion blocks
+                children = parse_md(md_content)
 
         # Create the page
-        with console.status(
-            f"Creating page in Notion...: {page_title}. Parent ID: {parent_id}",
-        ):
+        if json_output:
             result = client.create_page_in_page(parent_id, page_title, children)
+        else:
+            with console.status(
+                f"Creating page in Notion...: {page_title}. Parent ID: {parent_id}",
+            ):
+                result = client.create_page_in_page(parent_id, page_title, children)
 
         entry_id = result.get("id", "")
         entry_url = result.get("url", "")
 
-        console.print("✅ Page created successfully!", style="green")
-        console.print(f"🆔 Page ID: {entry_id}")
-        if entry_url:
-            console.print(f"🔗 URL: {entry_url}")
+        if json_output:
+            OutputFormatter.output_json({
+                "success": True,
+                "page_id": entry_id,
+                "url": entry_url,
+                "title": page_title
+            })
+        else:
+            console.print("✅ Page created successfully!", style="green")
+            console.print(f"🆔 Page ID: {entry_id}")
+            if entry_url:
+                console.print(f"🔗 URL: {entry_url}")
 
     except FileNotFoundError:
-        console.print(f"❌ File not found at: {filepath}", style="red")
-        raise typer.Exit(1)
+        handle_error(f"File not found at: {filepath}", json_mode=json_output, console=console)
     except Exception as e:
-        console.print(f"❌ Error: {e}", style="red")
-        traceback.print_exc()
-        raise typer.Exit(1)
+        if not json_output:
+            traceback.print_exc()
+        handle_error(f"Error: {e}", json_mode=json_output, console=console)
 
 
 @page_app.command("link")
@@ -1489,6 +1752,7 @@ def get_page_link(
         "-p",
         help="Only show public link if available",
     ),
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
 ) -> None:
     """Get the link for a specific page."""
     try:
@@ -1496,51 +1760,62 @@ def get_page_link(
         pages = client.get_page_by_name(name, fuzzy=True)
 
         if not pages:
-            console.print(f"❌ No pages found matching '{name}'.", style="red")
-            raise typer.Exit(1)
+            handle_error(f"No pages found matching '{name}'.", json_mode=json_output, console=console)
 
         # Get the best match (first result)
         page = pages[0]
         title = page.get("_title", "Untitled")
         urls = client.get_page_urls(page)
 
-        console.print(f"📄 Page: {title}", style="bold cyan")
-
+        # Determine which URL to use
+        url_to_copy = None
         if public_only:
             if urls["public"]:
-                console.print(f"🔗 Public URL: {urls['public']}", style="green")
                 url_to_copy = urls["public"]
             else:
-                console.print("❌ This page is not shared publicly.", style="red")
-                raise typer.Exit(1)
+                handle_error("This page is not shared publicly.", json_mode=json_output, console=console)
         else:
-            console.print(f"🔗 Private URL: {urls['private']}", style="blue")
             url_to_copy = urls["private"]
 
-            if urls["public"]:
-                console.print(f"🌐 Public URL: {urls['public']}", style="green")
-
         # Copy to clipboard if requested
+        copied = False
         if copy:
             try:
                 import pyperclip
-
                 pyperclip.copy(url_to_copy)
-                console.print("✅ Link copied to clipboard!", style="green")
+                copied = True
+                if not json_output:
+                    console.print("✅ Link copied to clipboard!", style="green")
             except ImportError:
-                console.print(
-                    "⚠️ pyperclip not installed. Install with: pip install pyperclip",
-                    style="yellow",
-                )
+                if not json_output:
+                    console.print(
+                        "⚠️ pyperclip not installed. Install with: pip install pyperclip",
+                        style="yellow",
+                    )
             except Exception as e:
-                console.print(f"⚠️ Failed to copy to clipboard: {e}", style="yellow")
+                if not json_output:
+                    console.print(f"⚠️ Failed to copy to clipboard: {e}", style="yellow")
+
+        if json_output:
+            OutputFormatter.output_json({
+                "page": title,
+                "private_url": urls["private"],
+                "public_url": urls.get("public"),
+                "copied": copied
+            })
+        else:
+            console.print(f"📄 Page: {title}", style="bold cyan")
+            if public_only:
+                console.print(f"🔗 Public URL: {urls['public']}", style="green")
+            else:
+                console.print(f"🔗 Private URL: {urls['private']}", style="blue")
+                if urls["public"]:
+                    console.print(f"🌐 Public URL: {urls['public']}", style="green")
 
     except ValueError as e:
-        console.print(f"❌ {e}", style="red")
-        raise typer.Exit(1)
+        handle_error(str(e), json_mode=json_output, console=console)
     except Exception as e:
-        console.print(f"❌ Error: {e}", style="red")
-        raise typer.Exit(1)
+        handle_error(f"Error: {e}", json_mode=json_output, console=console)
 
 
 # Shell completion commands
@@ -1940,11 +2215,16 @@ def uninstall_completion(
 
 
 @app.command("version")
-def version() -> None:
+def version(
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
+) -> None:
     """Show the version."""
     from . import __version__
 
-    console.print(f"notion version {__version__}")
+    if json_output:
+        OutputFormatter.output_json({"version": __version__})
+    else:
+        console.print(f"notion version {__version__}")
 
 
 if __name__ == "__main__":

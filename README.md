@@ -68,11 +68,103 @@ notion db entry-link "Tasks" "meeting"
 - **🔍 Prefix matching** - Use partial database/view names with auto-completion and selection menus
 - **🖱️ Clickable links** - Database and entry URLs are clickable in terminal output
 - **🔑 Automatic API key management** - CLI prompts for missing keys and saves them
+- **📊 JSON output mode** - All commands support `--json` flag for machine-readable output
 - **Smart filtering** - `--filter "status=Done,priority=High"`
 - **Custom columns** - `--columns "Name,Status,Priority"`
 - **File uploads** - `--file resume.pdf`
 - **Interactive mode** - `--interactive` to revise AI prompts
 - **Shell completions** - `notion completion install bash`
+
+## JSON Output
+
+All commands support the `--json` flag for machine-readable output, perfect for scripting, automation, and integration with other tools:
+
+```bash
+# List databases as JSON
+notion db list --json
+
+# Get database entries as JSON
+notion db show "Tasks" --json
+
+# Pipe to jq for filtering
+notion db list --json | jq '.databases[] | select(.title == "Tasks")'
+
+# Filter and extract specific fields
+notion db show "Tasks" --filter "Status=Done" --json | jq '.entries[] | {id, url}'
+
+# Create entry and capture ID
+ENTRY_ID=$(notion db create "New task" --json | jq -r '.entry_id')
+
+# Get links programmatically
+notion db link "Tasks" --json | jq -r '.url'
+notion page find "Meeting Notes" --json | jq '.pages[] | {title, url: .private_url}'
+```
+
+### JSON Output Features
+
+- **Pretty-printed**: 2-space indentation for readability
+- **Consistent format**: All commands return structured JSON with predictable schemas
+- **Error handling**: Errors are written to stderr (plain text), data to stdout (JSON)
+- **Non-interactive**: Automatically disables interactive prompts and confirmations
+- **Pipe-friendly**: Clean stdout makes it perfect for piping to tools like `jq`, `python -m json.tool`, etc.
+
+### Example JSON Outputs
+
+```bash
+# Database list
+notion db list --json
+{
+  "databases": [
+    {
+      "id": "abc123...",
+      "title": "Tasks",
+      "url": "https://notion.so/...",
+      "created_time": "2024-01-01T00:00:00.000Z",
+      "last_edited_time": "2024-01-15T12:30:00.000Z"
+    }
+  ]
+}
+
+# Database entries with metadata
+notion db show "Tasks" --limit 5 --json
+{
+  "database": {
+    "id": "abc123...",
+    "title": "Tasks",
+    "url": "https://notion.so/..."
+  },
+  "entries": [
+    {
+      "id": "entry123...",
+      "url": "https://notion.so/...",
+      "properties": {
+        "Name": "Review quarterly reports",
+        "Status": "In Progress",
+        "Priority": "High"
+      }
+    }
+  ],
+  "metadata": {
+    "total_count": 42,
+    "shown_count": 5,
+    "limit": 5,
+    "filter": null,
+    "columns": ["Name", "Status", "Priority"]
+  }
+}
+
+# Create entry
+notion db create "New task" --json
+{
+  "success": true,
+  "entry_id": "xyz789...",
+  "url": "https://notion.so/...",
+  "properties": {
+    "Name": "New task",
+    "Status": "Not Started"
+  }
+}
+```
 
 ## Advanced Examples
 
