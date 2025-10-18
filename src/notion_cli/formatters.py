@@ -520,7 +520,7 @@ class OutputFormatter:
                 "last_edited_time": page.get("last_edited_time"),
             }
 
-            # Extract title
+            # Extract title and all properties
             properties = page.get("properties", {})
             for _prop_name, prop_data in properties.items():
                 if prop_data.get("type") == "title":
@@ -530,6 +530,9 @@ class OutputFormatter:
                         break
             else:
                 page_data["title"] = "Untitled"
+
+            # Extract all properties using the existing helper
+            page_data["properties"] = OutputFormatter._extract_simple_properties(properties)
 
             # Format blocks
             formatted_blocks = [
@@ -542,7 +545,7 @@ class OutputFormatter:
             from rich.panel import Panel
             from rich.text import Text
 
-            # Extract title
+            # Extract title and properties
             title = "Untitled"
             properties = page.get("properties", {})
             for _prop_name, prop_data in properties.items():
@@ -552,6 +555,9 @@ class OutputFormatter:
                         title = title_content[0].get("plain_text", "Untitled")
                         break
 
+            # Extract all properties
+            simple_properties = OutputFormatter._extract_simple_properties(properties)
+
             # Format page header
             header_text = Text()
             header_text.append(f"📄 {title}\n", style="bold cyan")
@@ -559,6 +565,43 @@ class OutputFormatter:
             if page_url:
                 header_text.append(f"🔗 ", style="blue")
                 header_text.append(page_url, style="blue underline")
+
+            # Format properties table if there are non-title properties
+            properties_output = ""
+            non_title_props = {k: v for k, v in simple_properties.items() if v is not None}
+            if non_title_props:
+                properties_table = Table(show_header=True, header_style="bold magenta", box=None)
+                properties_table.add_column("Property", style="cyan", no_wrap=True)
+                properties_table.add_column("Value", style="white")
+
+                for prop_name, prop_value in non_title_props.items():
+                    # Format the value for display
+                    if isinstance(prop_value, list):
+                        display_value = ", ".join(str(v) for v in prop_value)
+                    elif isinstance(prop_value, dict):
+                        # For date ranges
+                        if "start" in prop_value:
+                            display_value = prop_value.get("start", "")
+                            if prop_value.get("end"):
+                                display_value += f" → {prop_value.get('end')}"
+                        # For unique_id type (prefix + number)
+                        elif "prefix" in prop_value and "number" in prop_value:
+                            display_value = f"{prop_value['prefix']}-{prop_value['number']}"
+                        else:
+                            display_value = str(prop_value)
+                    elif isinstance(prop_value, bool):
+                        display_value = "✓" if prop_value else "✗"
+                    else:
+                        display_value = str(prop_value) if prop_value else "—"
+
+                    properties_table.add_row(prop_name, display_value)
+
+                # Render table to string
+                from io import StringIO
+                from rich.console import Console as RichConsole
+                string_console = RichConsole(file=StringIO(), width=80)
+                string_console.print(properties_table)
+                properties_output = string_console.file.getvalue()
 
             # Format blocks
             content_lines = []
@@ -569,8 +612,14 @@ class OutputFormatter:
 
             content = "\n".join(content_lines) if content_lines else "(empty page)"
 
+            # Combine header, properties, and content
+            full_content = f"{header_text}"
+            if properties_output:
+                full_content += f"\n\n{properties_output}"
+            full_content += f"\n\n{content}"
+
             return Panel(
-                f"{header_text}\n\n{content}",
+                full_content,
                 title="Page Content",
                 border_style="cyan",
                 expand=False,
