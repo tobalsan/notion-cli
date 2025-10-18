@@ -1818,6 +1818,102 @@ def get_page_link(
         handle_error(f"Error: {e}", json_mode=json_output, console=console)
 
 
+@page_app.command("view")
+def view_page(
+    page_name: str | None = typer.Argument(None, help="Page name to view"),
+    page_id: str = typer.Option(None, "--id", help="Page ID to view directly"),
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
+) -> None:
+    """View the content of a specific page."""
+    try:
+        # Validate that exactly one of page_name or page_id is provided
+        if not page_name and not page_id:
+            handle_error(
+                "Either page name or --id must be provided",
+                json_mode=json_output,
+                console=console
+            )
+        if page_name and page_id:
+            handle_error(
+                "Cannot specify both page name and --id. Use one or the other.",
+                json_mode=json_output,
+                console=console
+            )
+
+        client = NotionClientWrapper()
+        page = None
+
+        if page_id:
+            # Fetch page directly by ID
+            if json_output:
+                page = client.get_page_by_id(page_id)
+            else:
+                with console.status(f"Fetching page {page_id}..."):
+                    page = client.get_page_by_id(page_id)
+        else:
+            # Search for page by name
+            if json_output:
+                pages = client.get_page_by_name(page_name, fuzzy=True)
+            else:
+                with console.status(f"Searching for page '{page_name}'..."):
+                    pages = client.get_page_by_name(page_name, fuzzy=True)
+
+            if not pages:
+                handle_error(
+                    f"No pages found matching '{page_name}'.",
+                    json_mode=json_output,
+                    console=console
+                )
+
+            # If multiple matches and not in JSON mode, let user select
+            if len(pages) > 1 and not json_output:
+                console.print(f"📄 Found {len(pages)} matching pages:", style="cyan")
+                for i, p in enumerate(pages[:10], 1):  # Show top 10
+                    title = p.get("_title", "Untitled")
+                    match_score = p.get("_match_score", 0)
+                    console.print(f"  {i}. {title} (match: {match_score:.2f})", style="white")
+
+                try:
+                    choice = typer.prompt(
+                        f"\nSelect page to view (1-{min(len(pages), 10)})",
+                        type=int,
+                    )
+                    if 1 <= choice <= min(len(pages), 10):
+                        page = pages[choice - 1]
+                    else:
+                        handle_error("Invalid selection", json_mode=json_output, console=console)
+                except (typer.Abort, ValueError):
+                    console.print("❌ Operation cancelled", style="yellow")
+                    raise typer.Exit(1)
+            else:
+                # Use best match
+                page = pages[0]
+
+        if not page:
+            handle_error("Failed to retrieve page", json_mode=json_output, console=console)
+
+        # Get page blocks
+        page_id_to_fetch = page.get("id", "")
+        if json_output:
+            blocks = client.get_page_blocks(page_id_to_fetch)
+        else:
+            with console.status("Fetching page content..."):
+                blocks = client.get_page_blocks(page_id_to_fetch)
+
+        # Format and display
+        output = OutputFormatter.format_page_content(page, blocks, as_json=json_output)
+
+        if json_output:
+            OutputFormatter.output_json(output)
+        else:
+            console.print(output)
+
+    except ValueError as e:
+        handle_error(str(e), json_mode=json_output, console=console)
+    except Exception as e:
+        handle_error(f"Error: {e}", json_mode=json_output, console=console)
+
+
 # Shell completion commands
 
 
@@ -1851,7 +1947,7 @@ _notion_completion() {
             opts="list show update delete"
             ;;
         page)
-            opts="list find link"
+            opts="list find link view create"
             ;;
         completion)
             opts="install show uninstall"
@@ -1915,7 +2011,9 @@ _notion() {
                     _values "page command" \\
                         "list[List pages]" \\
                         "find[Find pages]" \\
-                        "link[Get page link]"
+                        "link[Get page link]" \\
+                        "view[View page content]" \\
+                        "create[Create page]"
                     ;;
                 completion)
                     _values "completion command" \\
@@ -1964,6 +2062,8 @@ complete -c notion -f -n "__fish_seen_subcommand_from view" -a "delete" -d "Dele
 complete -c notion -f -n "__fish_seen_subcommand_from page" -a "list" -d "List pages"
 complete -c notion -f -n "__fish_seen_subcommand_from page" -a "find" -d "Find pages"
 complete -c notion -f -n "__fish_seen_subcommand_from page" -a "link" -d "Get page link"
+complete -c notion -f -n "__fish_seen_subcommand_from page" -a "view" -d "View page content"
+complete -c notion -f -n "__fish_seen_subcommand_from page" -a "create" -d "Create page"
 
 # Completion subcommands
 complete -c notion -f -n "__fish_seen_subcommand_from completion" -a "install" -d "Install completion"
@@ -1985,7 +2085,7 @@ Register-ArgumentCompleter -CommandName notion -ScriptBlock {
         'auth' = @('setup', 'test')
         'db' = @('list', 'show', 'create', 'edit', 'link', 'entry-link')
         'view' = @('list', 'show', 'update', 'delete')
-        'page' = @('list', 'find', 'link')
+        'page' = @('list', 'find', 'link', 'view', 'create')
         'completion' = @('install', 'show', 'uninstall')
         'version' = @()
     }

@@ -288,6 +288,294 @@ class OutputFormatter:
         """Output data as pretty-printed JSON to stdout."""
         OutputFormatter._output_json(data)
 
+    @staticmethod
+    def _extract_rich_text_content(rich_text_array: list[dict[str, Any]]) -> str:
+        """Extract plain text content from Notion rich text array."""
+        if not rich_text_array:
+            return ""
+        content = []
+        for item in rich_text_array:
+            text = item.get("plain_text", "")
+            # Check for annotations (bold, italic, etc.)
+            annotations = item.get("annotations", {})
+            if annotations.get("bold"):
+                text = f"**{text}**"
+            if annotations.get("italic"):
+                text = f"*{text}*"
+            if annotations.get("code"):
+                text = f"`{text}`"
+            if annotations.get("strikethrough"):
+                text = f"~~{text}~~"
+            content.append(text)
+        return "".join(content)
+
+    @staticmethod
+    def _format_block_for_display(block: dict[str, Any], indent_level: int = 0) -> str:
+        """Format a single block for Rich console display."""
+        block_type = block.get("type", "")
+        indent = "  " * indent_level
+        content_lines = []
+
+        if block_type == "paragraph":
+            text = OutputFormatter._extract_rich_text_content(
+                block.get("paragraph", {}).get("rich_text", [])
+            )
+            if text.strip():
+                content_lines.append(f"{indent}{text}")
+
+        elif block_type in ["heading_1", "heading_2", "heading_3"]:
+            heading_data = block.get(block_type, {})
+            text = OutputFormatter._extract_rich_text_content(
+                heading_data.get("rich_text", [])
+            )
+            if block_type == "heading_1":
+                content_lines.append(f"{indent}# {text}")
+            elif block_type == "heading_2":
+                content_lines.append(f"{indent}## {text}")
+            else:
+                content_lines.append(f"{indent}### {text}")
+
+        elif block_type == "bulleted_list_item":
+            text = OutputFormatter._extract_rich_text_content(
+                block.get("bulleted_list_item", {}).get("rich_text", [])
+            )
+            content_lines.append(f"{indent}• {text}")
+
+        elif block_type == "numbered_list_item":
+            text = OutputFormatter._extract_rich_text_content(
+                block.get("numbered_list_item", {}).get("rich_text", [])
+            )
+            content_lines.append(f"{indent}1. {text}")
+
+        elif block_type == "to_do":
+            todo_data = block.get("to_do", {})
+            checked = todo_data.get("checked", False)
+            text = OutputFormatter._extract_rich_text_content(todo_data.get("rich_text", []))
+            checkbox = "☑" if checked else "☐"
+            content_lines.append(f"{indent}{checkbox} {text}")
+
+        elif block_type == "toggle":
+            text = OutputFormatter._extract_rich_text_content(
+                block.get("toggle", {}).get("rich_text", [])
+            )
+            content_lines.append(f"{indent}▸ {text}")
+
+        elif block_type == "code":
+            code_data = block.get("code", {})
+            text = OutputFormatter._extract_rich_text_content(code_data.get("rich_text", []))
+            language = code_data.get("language", "")
+            content_lines.append(f"{indent}```{language}")
+            content_lines.append(f"{indent}{text}")
+            content_lines.append(f"{indent}```")
+
+        elif block_type == "quote":
+            text = OutputFormatter._extract_rich_text_content(
+                block.get("quote", {}).get("rich_text", [])
+            )
+            content_lines.append(f"{indent}> {text}")
+
+        elif block_type == "callout":
+            callout_data = block.get("callout", {})
+            icon = callout_data.get("icon", {})
+            emoji = icon.get("emoji", "💡") if icon.get("type") == "emoji" else "💡"
+            text = OutputFormatter._extract_rich_text_content(callout_data.get("rich_text", []))
+            content_lines.append(f"{indent}{emoji} {text}")
+
+        elif block_type == "divider":
+            content_lines.append(f"{indent}---")
+
+        elif block_type == "table_of_contents":
+            content_lines.append(f"{indent}📋 [Table of Contents]")
+
+        elif block_type == "image":
+            image_data = block.get("image", {})
+            if image_data.get("type") == "external":
+                url = image_data.get("external", {}).get("url", "")
+            else:
+                url = image_data.get("file", {}).get("url", "")
+            caption = OutputFormatter._extract_rich_text_content(image_data.get("caption", []))
+            if caption:
+                content_lines.append(f"{indent}🖼️  {caption} ({url})")
+            else:
+                content_lines.append(f"{indent}🖼️  Image: {url}")
+
+        elif block_type == "bookmark":
+            bookmark_data = block.get("bookmark", {})
+            url = bookmark_data.get("url", "")
+            caption = OutputFormatter._extract_rich_text_content(bookmark_data.get("caption", []))
+            if caption:
+                content_lines.append(f"{indent}🔖 {caption}: {url}")
+            else:
+                content_lines.append(f"{indent}🔖 {url}")
+
+        elif block_type in ["file", "pdf", "video", "audio"]:
+            file_data = block.get(block_type, {})
+            if file_data.get("type") == "external":
+                url = file_data.get("external", {}).get("url", "")
+            else:
+                url = file_data.get("file", {}).get("url", "")
+            caption = OutputFormatter._extract_rich_text_content(file_data.get("caption", []))
+            icon = {"file": "📎", "pdf": "📄", "video": "🎥", "audio": "🎵"}.get(block_type, "📎")
+            if caption:
+                content_lines.append(f"{indent}{icon} {caption}: {url}")
+            else:
+                content_lines.append(f"{indent}{icon} {url}")
+
+        elif block_type == "equation":
+            equation_data = block.get("equation", {})
+            expression = equation_data.get("expression", "")
+            content_lines.append(f"{indent}∑ {expression}")
+
+        else:
+            # Unsupported block type - show basic info
+            content_lines.append(f"{indent}[{block_type}]")
+
+        # Process children recursively
+        children = block.get("children", [])
+        if children:
+            for child in children:
+                child_content = OutputFormatter._format_block_for_display(
+                    child, indent_level + 1
+                )
+                if child_content:
+                    content_lines.append(child_content)
+
+        return "\n".join(content_lines)
+
+    @staticmethod
+    def _format_block_for_json(block: dict[str, Any]) -> dict[str, Any]:
+        """Format a block for JSON output with simplified structure."""
+        block_type = block.get("type", "")
+        result: dict[str, Any] = {
+            "id": block.get("id", ""),
+            "type": block_type,
+        }
+
+        # Extract content based on block type
+        if block_type in [
+            "paragraph",
+            "heading_1",
+            "heading_2",
+            "heading_3",
+            "bulleted_list_item",
+            "numbered_list_item",
+            "quote",
+            "callout",
+            "toggle",
+        ]:
+            block_data = block.get(block_type, {})
+            result["content"] = OutputFormatter._extract_rich_text_content(
+                block_data.get("rich_text", [])
+            )
+
+        elif block_type == "to_do":
+            todo_data = block.get("to_do", {})
+            result["checked"] = todo_data.get("checked", False)
+            result["content"] = OutputFormatter._extract_rich_text_content(
+                todo_data.get("rich_text", [])
+            )
+
+        elif block_type == "code":
+            code_data = block.get("code", {})
+            result["language"] = code_data.get("language", "")
+            result["content"] = OutputFormatter._extract_rich_text_content(
+                code_data.get("rich_text", [])
+            )
+
+        elif block_type in ["image", "file", "pdf", "video", "audio", "bookmark"]:
+            file_data = block.get(block_type, {})
+            if file_data.get("type") == "external":
+                result["url"] = file_data.get("external", {}).get("url", "")
+            else:
+                result["url"] = file_data.get("file", {}).get("url", "")
+            result["caption"] = OutputFormatter._extract_rich_text_content(
+                file_data.get("caption", [])
+            )
+
+        elif block_type == "equation":
+            result["expression"] = block.get("equation", {}).get("expression", "")
+
+        # Process children recursively
+        children = block.get("children", [])
+        if children:
+            result["children"] = [
+                OutputFormatter._format_block_for_json(child) for child in children
+            ]
+        else:
+            result["children"] = []
+
+        return result
+
+    @staticmethod
+    def format_page_content(
+        page: dict[str, Any], blocks: list[dict[str, Any]], as_json: bool = False
+    ) -> Any:
+        """Format page content for output."""
+        if as_json:
+            # Extract page metadata
+            page_data = {
+                "id": page.get("id", ""),
+                "url": page.get("url", ""),
+                "created_time": page.get("created_time"),
+                "last_edited_time": page.get("last_edited_time"),
+            }
+
+            # Extract title
+            properties = page.get("properties", {})
+            for _prop_name, prop_data in properties.items():
+                if prop_data.get("type") == "title":
+                    title_content = prop_data.get("title", [])
+                    if title_content:
+                        page_data["title"] = title_content[0].get("plain_text", "Untitled")
+                        break
+            else:
+                page_data["title"] = "Untitled"
+
+            # Format blocks
+            formatted_blocks = [
+                OutputFormatter._format_block_for_json(block) for block in blocks
+            ]
+
+            return {"page": page_data, "blocks": formatted_blocks}
+        else:
+            # Rich console output - return formatted text
+            from rich.panel import Panel
+            from rich.text import Text
+
+            # Extract title
+            title = "Untitled"
+            properties = page.get("properties", {})
+            for _prop_name, prop_data in properties.items():
+                if prop_data.get("type") == "title":
+                    title_content = prop_data.get("title", [])
+                    if title_content:
+                        title = title_content[0].get("plain_text", "Untitled")
+                        break
+
+            # Format page header
+            header_text = Text()
+            header_text.append(f"📄 {title}\n", style="bold cyan")
+            page_url = page.get("url", "")
+            if page_url:
+                header_text.append(f"🔗 ", style="blue")
+                header_text.append(page_url, style="blue underline")
+
+            # Format blocks
+            content_lines = []
+            for block in blocks:
+                formatted = OutputFormatter._format_block_for_display(block)
+                if formatted:
+                    content_lines.append(formatted)
+
+            content = "\n".join(content_lines) if content_lines else "(empty page)"
+
+            return Panel(
+                f"{header_text}\n\n{content}",
+                title="Page Content",
+                border_style="cyan",
+                expand=False,
+            )
+
 
 def handle_error(
     message: str,

@@ -779,3 +779,49 @@ class NotionClientWrapper:
             urls["public"] = public_url
 
         return urls
+
+    def get_page_by_id(self, page_id: str) -> dict[str, Any]:
+        """Get a page by its ID."""
+        try:
+            return self.client.pages.retrieve(page_id=page_id)
+        except APIResponseError as e:
+            raise Exception(f"Failed to get page {page_id}: {e}")
+
+    def get_page_blocks(self, page_id: str) -> list[dict[str, Any]]:
+        """Get all blocks from a page with pagination and nested children support."""
+        try:
+            all_blocks = []
+            start_cursor = None
+
+            while True:
+                # Fetch blocks from the page
+                if start_cursor:
+                    response = self.client.blocks.children.list(
+                        block_id=page_id,
+                        start_cursor=start_cursor,
+                    )
+                else:
+                    response = self.client.blocks.children.list(block_id=page_id)
+
+                blocks = response.get("results", [])
+                all_blocks.extend(blocks)
+
+                # Check if there are more pages
+                if not response.get("has_more", False):
+                    break
+
+                start_cursor = response.get("next_cursor")
+                if not start_cursor:
+                    break
+
+            # Recursively fetch children for blocks that have them
+            for block in all_blocks:
+                if block.get("has_children", False):
+                    block_id = block.get("id", "")
+                    if block_id:
+                        children = self.get_page_blocks(block_id)
+                        block["children"] = children
+
+            return all_blocks
+        except APIResponseError as e:
+            raise Exception(f"Failed to get blocks from page {page_id}: {e}")
