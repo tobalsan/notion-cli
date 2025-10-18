@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-This is a Python CLI tool called `notion-cli-ai` that provides AI-powered database operations for Notion. It uses natural language processing to create and edit Notion database entries, along with traditional database querying capabilities.
+This is a Python CLI tool called `notion-cli` that provides AI-powered database operations for Notion. It uses natural language processing to create and edit Notion database entries, along with traditional database querying capabilities.
 
 ## Development Commands
 
@@ -17,7 +17,7 @@ uv sync
 pip install -e .
 
 # Install from source with uv
-uv add notion-cli-ai
+uv add notion-cli
 ```
 
 ### Code Quality and Testing

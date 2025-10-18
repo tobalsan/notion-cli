@@ -1,6 +1,6 @@
 # Notion CLI
 
-[![PyPI version](https://badge.fury.io/py/notion-cli-ai.svg)](https://badge.fury.io/py/notion-cli-ai)
+[![PyPI version](https://badge.fury.io/py/notion-cli.svg)](https://badge.fury.io/py/notion-cli)
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 
 AI-powered CLI tool for managing Notion databases with natural language commands.
@@ -10,7 +10,7 @@ AI-powered CLI tool for managing Notion databases with natural language commands
 ### Installation
 
 ```bash
-pip install notion-cli-ai
+pip install notion-cli
 ```
 
 ### Setup

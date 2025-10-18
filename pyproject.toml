@@ -1,5 +1,5 @@
 [project]
-name = "notion-cli-ai"
+name = "notion-cli"
 version = "0.1.0"
 description = "AI-powered CLI tool for Notion database operations using natural language"
 readme = "README.md"
@@ -47,10 +47,10 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/vertexcover-io/notion-cli-ai"
-Repository = "https://github.com/vertexcover-io/notion-cli-ai"
-Documentation = "https://github.com/vertexcover-io/notion-cli-ai#readme"
-"Bug Tracker" = "https://github.com/vertexcover-io/notion-cli-ai/issues"
+Homepage = "https://github.com/vertexcover-io/notion-cli"
+Repository = "https://github.com/vertexcover-io/notion-cli"
+Documentation = "https://github.com/vertexcover-io/notion-cli#readme"
+"Bug Tracker" = "https://github.com/vertexcover-io/notion-cli/issues"
 
 [project.scripts]
 notion = "notion_cli.main:app"
