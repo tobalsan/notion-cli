@@ -58,6 +58,11 @@ notion page create --file "path/to/file.md" --parent-name "My Workspace"
 notion page create --parent-id "abc123" --properties '{"Name": "New Page", "Status": "Active"}'
 notion page create --parent-name "Projects" --blocks '[...]' --properties '{"Name": "Task"}'
 
+# Update existing pages
+notion page update "Meeting Notes" --file "updated-notes.md"
+notion page update --id "page-id" --properties '{"Status": "Complete"}'
+notion page update "Design Doc" --blocks '[...]' --properties '{"Status": "Published"}'
+
 # Get database/entry links (clickable in terminal)
 notion db link "Tasks"
 notion db entry-link "Tasks" "meeting"
@@ -208,7 +213,9 @@ notion view get-default
 notion db show "Pro"  # If you have "Projects" and "Proposals", shows menu to choose
 ```
 
-## Page Creation
+## Page Management
+
+### Page Creation
 
 The `notion page create` command supports multiple ways to create pages:
 
@@ -263,6 +270,42 @@ notion page create \
 - **Parent types**: Supports both database parents and page parents
 - **Automatic detection**: `--parent-id` automatically detects database vs page
 - **JSON mode**: All options work with `--json` for scripting
+
+### Page Updates
+
+The `notion page update` command allows you to update existing pages:
+
+```bash
+# Update page content from markdown file
+notion page update "Meeting Notes" --file "updated-notes.md"
+
+# Update by page ID
+notion page update --id "abc123" --file "content.md"
+
+# Update properties only
+notion page update "Design Doc" --properties '{"Status": "Published", "Priority": "High"}'
+
+# Update both content and properties
+notion page update "Project Plan" \
+  --file "plan.md" \
+  --properties '{"Status": "Active"}'
+
+# Update with JSON blocks
+notion page update --id "page-id" \
+  --blocks '[{"object": "block", "type": "paragraph", ...}]'
+
+# Update pages in databases (properties get converted automatically)
+notion page update "Task Item" \
+  --properties '{"Status": "Done", "Priority": "Low"}'
+```
+
+### Key features
+- **Complete replacement**: `--file` and `--blocks` completely replace page content
+- **Property updates**: Use `--properties` to update page properties
+- **Smart title extraction**: If markdown starts with `# Title`, it updates the page title
+- **Database-aware**: Automatically handles property conversion for database pages
+- **Fuzzy search**: Find pages by partial name match
+- **JSON mode**: Full support for `--json` output
 
 ## Configuration
 
