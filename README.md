@@ -53,8 +53,10 @@ notion db edit "Mark all completed tasks as archived"  # Uses default database
 notion db show "Task"  # Matches "Tasks" automatically
 notion db show "Pro"   # Shows selection menu if multiple matches like "Projects", "Proposals"
 
-# Create a page from a file
-notion page create "path/to/your/file.md"
+# Create pages in multiple ways
+notion page create --file "path/to/file.md" --parent-name "My Workspace"
+notion page create --parent-id "abc123" --properties '{"Name": "New Page", "Status": "Active"}'
+notion page create --parent-name "Projects" --blocks '[...]' --properties '{"Name": "Task"}'
 
 # Get database/entry links (clickable in terminal)
 notion db link "Tasks"
@@ -180,8 +182,17 @@ notion db show "Hir" --filter "status not in 'Rejected,Declined'" --save-view "a
 notion view show "active"  # Matches "active-candidates"
 notion view show  # Uses default view
 
-# Create a page from a file with a specific parent
-notion page create "path/to/file.md" --parent-name "Parent Page Title"
+# Create pages in databases with properties
+notion page create --parent-name "Projects" --properties '{"Name": "New Feature", "Status": "Planning"}'
+
+# Create pages with JSON blocks
+notion page create --parent-id "db-id" --blocks '[{"object": "block", "type": "paragraph", ...}]'
+
+# Create pages from markdown files in databases
+notion page create --file "spec.md" --parent-name "Projects" --properties '{"Status": "Active"}'
+
+# Create pages in pages (subpages)
+notion page create --file "notes.md" --parent-name "Parent Page Title"
 
 # Interactive AI creation with improved syntax
 notion db create "New ML project for customer segmentation" --database "Projects" --interactive --file requirements.txt
@@ -196,6 +207,62 @@ notion view get-default
 # Prefix matching with multiple matches shows selection menu
 notion db show "Pro"  # If you have "Projects" and "Proposals", shows menu to choose
 ```
+
+## Page Creation
+
+The `notion page create` command supports multiple ways to create pages:
+
+### Create pages in databases with properties
+
+```bash
+# Get database schema to see available properties
+notion db properties --id "database-id"
+
+# Create page with properties only
+notion page create \
+  --parent-id "database-id" \
+  --properties '{"Name": "New Page", "Status": "Active", "Priority": "High"}'
+
+# Or use database name
+notion page create \
+  --parent-name "Projects" \
+  --properties '{"Name": "New Feature", "Status": "Planning"}'
+```
+
+### Create pages with custom content
+
+```bash
+# From markdown file
+notion page create \
+  --file "spec.md" \
+  --parent-name "Projects" \
+  --properties '{"Status": "Active"}'
+
+# With JSON blocks (Notion block format)
+notion page create \
+  --parent-id "database-id" \
+  --properties '{"Name": "Design Doc"}' \
+  --blocks '[{"object": "block", "type": "heading_2", "heading_2": {"rich_text": [{"type": "text", "text": {"content": "Overview"}}]}}]'
+```
+
+### Create pages within pages (subpages)
+
+```bash
+# From markdown file
+notion page create --file "notes.md" --parent-name "Meeting Notes"
+
+# With custom blocks
+notion page create \
+  --parent-id "page-id" \
+  --blocks '[{"object": "block", "type": "paragraph", "paragraph": {"rich_text": [{"type": "text", "text": {"content": "Content here"}}]}}]'
+```
+
+### Key features
+- **Flexible content**: Use `--file` for markdown or `--blocks` for JSON blocks
+- **Database support**: Use `--properties` to set database properties (get schema via `notion db properties`)
+- **Parent types**: Supports both database parents and page parents
+- **Automatic detection**: `--parent-id` automatically detects database vs page
+- **JSON mode**: All options work with `--json` for scripting
 
 ## Configuration
 
