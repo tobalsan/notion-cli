@@ -747,12 +747,8 @@ class OutputFormatter:
             # Extract all properties using the existing helper
             page_data["properties"] = OutputFormatter._extract_simple_properties(properties)
 
-            # Format blocks
-            formatted_blocks = [
-                OutputFormatter._format_block_for_json(block) for block in blocks
-            ]
-
-            return {"page": page_data, "blocks": formatted_blocks}
+            # Return blocks in proper Notion API format (as-is from the API)
+            return {"page": page_data, "blocks": blocks}
         else:
             # Rich console output - return formatted text
             from rich.panel import Panel
