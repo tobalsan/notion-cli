@@ -507,6 +507,219 @@ class OutputFormatter:
         return result
 
     @staticmethod
+    def format_property_schema(
+        database: dict[str, Any], as_json: bool = False
+    ) -> Any:
+        """Format database property schema for output."""
+        properties = database.get("properties", {})
+
+        if as_json:
+            # Build structured schema output
+            schema_output = []
+            for prop_name, prop_data in properties.items():
+                prop_type = prop_data.get("type", "")
+                prop_schema = {
+                    "name": prop_name,
+                    "type": prop_type,
+                    "id": prop_data.get("id", ""),
+                }
+
+                # Add type-specific configuration
+                if prop_type == "select":
+                    select_config = prop_data.get("select", {})
+                    options = select_config.get("options", [])
+                    prop_schema["options"] = [
+                        {
+                            "name": opt.get("name", ""),
+                            "id": opt.get("id", ""),
+                            "color": opt.get("color", "default"),
+                        }
+                        for opt in options
+                    ]
+                elif prop_type == "multi_select":
+                    ms_config = prop_data.get("multi_select", {})
+                    options = ms_config.get("options", [])
+                    prop_schema["options"] = [
+                        {
+                            "name": opt.get("name", ""),
+                            "id": opt.get("id", ""),
+                            "color": opt.get("color", "default"),
+                        }
+                        for opt in options
+                    ]
+                elif prop_type == "status":
+                    status_config = prop_data.get("status", {})
+                    options = status_config.get("options", [])
+                    prop_schema["options"] = [
+                        {
+                            "name": opt.get("name", ""),
+                            "id": opt.get("id", ""),
+                            "color": opt.get("color", "default"),
+                        }
+                        for opt in options
+                    ]
+                    prop_schema["groups"] = status_config.get("groups", [])
+                elif prop_type == "number":
+                    number_config = prop_data.get("number", {})
+                    prop_schema["format"] = number_config.get("format", "number")
+                elif prop_type == "formula":
+                    formula_config = prop_data.get("formula", {})
+                    prop_schema["expression"] = formula_config.get("expression", "")
+                elif prop_type == "relation":
+                    relation_config = prop_data.get("relation", {})
+                    prop_schema["database_id"] = relation_config.get("database_id", "")
+                    prop_schema["synced_property_name"] = relation_config.get(
+                        "synced_property_name"
+                    )
+                    prop_schema["synced_property_id"] = relation_config.get("synced_property_id")
+                elif prop_type == "rollup":
+                    rollup_config = prop_data.get("rollup", {})
+                    prop_schema["relation_property_name"] = rollup_config.get(
+                        "relation_property_name", ""
+                    )
+                    prop_schema["relation_property_id"] = rollup_config.get(
+                        "relation_property_id", ""
+                    )
+                    prop_schema["rollup_property_name"] = rollup_config.get(
+                        "rollup_property_name", ""
+                    )
+                    prop_schema["rollup_property_id"] = rollup_config.get(
+                        "rollup_property_id", ""
+                    )
+                    prop_schema["function"] = rollup_config.get("function", "")
+                elif prop_type == "date":
+                    # Date properties don't have much configuration in the schema
+                    pass
+
+                schema_output.append(prop_schema)
+
+            # Extract database metadata
+            db_title = "Untitled"
+            if "title" in database and database["title"]:
+                if isinstance(database["title"], list) and database["title"]:
+                    db_title = database["title"][0].get("plain_text", "Untitled")
+                elif isinstance(database["title"], str):
+                    db_title = database["title"]
+
+            return {
+                "database": {
+                    "id": database.get("id", ""),
+                    "title": db_title,
+                    "url": database.get("url", ""),
+                },
+                "properties": schema_output,
+            }
+        else:
+            # Rich console output - create detailed table
+            from rich.panel import Panel
+            from rich.text import Text
+
+            # Extract database title
+            db_title = "Untitled"
+            if "title" in database and database["title"]:
+                if isinstance(database["title"], list) and database["title"]:
+                    db_title = database["title"][0].get("plain_text", "Untitled")
+                elif isinstance(database["title"], str):
+                    db_title = database["title"]
+
+            # Create header
+            header = Text()
+            header.append(f"📊 Database: {db_title}\n", style="bold cyan")
+            db_url = database.get("url", "")
+            if db_url:
+                header.append("🔗 ", style="blue")
+                header.append(db_url, style="blue underline")
+                header.append("\n")
+            header.append(f"\n📋 Properties ({len(properties)} total)", style="bold magenta")
+
+            # Create properties table
+            table = Table(show_header=True, header_style="bold magenta")
+            table.add_column("Property Name", style="cyan", no_wrap=True)
+            table.add_column("Type", style="green", no_wrap=True)
+            table.add_column("Configuration", style="white")
+
+            for prop_name, prop_data in properties.items():
+                prop_type = prop_data.get("type", "")
+                config_info = ""
+
+                # Build configuration string based on type
+                if prop_type == "select":
+                    select_config = prop_data.get("select", {})
+                    options = select_config.get("options", [])
+                    if options:
+                        option_names = [opt.get("name", "") for opt in options[:5]]
+                        config_info = f"Options: {', '.join(option_names)}"
+                        if len(options) > 5:
+                            config_info += f" (+{len(options) - 5} more)"
+                elif prop_type == "multi_select":
+                    ms_config = prop_data.get("multi_select", {})
+                    options = ms_config.get("options", [])
+                    if options:
+                        option_names = [opt.get("name", "") for opt in options[:5]]
+                        config_info = f"Options: {', '.join(option_names)}"
+                        if len(options) > 5:
+                            config_info += f" (+{len(options) - 5} more)"
+                elif prop_type == "status":
+                    status_config = prop_data.get("status", {})
+                    options = status_config.get("options", [])
+                    if options:
+                        option_names = [opt.get("name", "") for opt in options[:5]]
+                        config_info = f"Options: {', '.join(option_names)}"
+                        if len(options) > 5:
+                            config_info += f" (+{len(options) - 5} more)"
+                elif prop_type == "number":
+                    number_config = prop_data.get("number", {})
+                    format_type = number_config.get("format", "number")
+                    config_info = f"Format: {format_type}"
+                elif prop_type == "formula":
+                    formula_config = prop_data.get("formula", {})
+                    expression = formula_config.get("expression", "")
+                    if expression:
+                        # Truncate long formulas
+                        if len(expression) > 50:
+                            config_info = f"Formula: {expression[:47]}..."
+                        else:
+                            config_info = f"Formula: {expression}"
+                elif prop_type == "relation":
+                    relation_config = prop_data.get("relation", {})
+                    db_id = relation_config.get("database_id", "")
+                    synced_prop = relation_config.get("synced_property_name")
+                    if synced_prop:
+                        config_info = f"Related DB: {db_id[:8]}... (synced: {synced_prop})"
+                    else:
+                        config_info = f"Related DB: {db_id[:8]}..."
+                elif prop_type == "rollup":
+                    rollup_config = prop_data.get("rollup", {})
+                    relation_prop = rollup_config.get("relation_property_name", "")
+                    rollup_prop = rollup_config.get("rollup_property_name", "")
+                    function = rollup_config.get("function", "")
+                    config_info = f"Rollup: {relation_prop}.{rollup_prop} ({function})"
+                elif prop_type in ["created_time", "last_edited_time"]:
+                    config_info = "Auto-generated"
+                elif prop_type in ["created_by", "last_edited_by"]:
+                    config_info = "Auto-generated"
+
+                table.add_row(prop_name, prop_type, config_info or "—")
+
+            # Combine header and table in a panel
+            from io import StringIO
+            from rich.console import Console as RichConsole
+
+            # Render table to string
+            string_console = RichConsole(file=StringIO(), width=100)
+            string_console.print(table)
+            table_output = string_console.file.getvalue()
+
+            full_output = f"{header}\n\n{table_output}"
+
+            return Panel(
+                full_output,
+                title="Database Property Schema",
+                border_style="cyan",
+                expand=False,
+            )
+
+    @staticmethod
     def format_page_content(
         page: dict[str, Any], blocks: list[dict[str, Any]], as_json: bool = False
     ) -> Any:

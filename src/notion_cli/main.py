@@ -540,6 +540,75 @@ def show_database(
         handle_error(f"Error: {e}", json_mode=json_output, console=console)
 
 
+@db_app.command("properties")
+def show_database_properties(
+    name: str | None = typer.Argument(
+        None, help="Database name to show properties for (uses default if not specified)"
+    ),
+    database_id: str = typer.Option(
+        None,
+        "--id",
+        help="Database ID to retrieve directly",
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
+) -> None:
+    """Show detailed property schema for a database."""
+    try:
+        # Validate that only one of name or database_id is provided
+        if name and database_id:
+            handle_error(
+                "Cannot specify both database name and --id. Use one or the other.",
+                json_mode=json_output,
+                console=console
+            )
+
+        client = NotionClientWrapper()
+        database = None
+
+        if database_id:
+            # Fetch database directly by ID
+            if json_output:
+                database = client.get_database_by_id(database_id)
+            else:
+                with console.status(f"Fetching database {database_id}..."):
+                    database = client.get_database_by_id(database_id)
+        else:
+            # Get database name or use default
+            name = get_database_name_or_default(name)
+
+            # Resolve database by name with prefix matching
+            database = resolve_database_name(name, interactive=not json_output)
+
+            if not database:
+                msg = f"Database '{name}' not found."
+                if not json_output:
+                    console.print("Use 'notion db list' to see available databases.", style="yellow")
+                handle_error(msg, json_mode=json_output, console=console)
+
+        # Check that properties exist
+        properties = database.get("properties", {})
+        if not properties:
+            msg = "No properties found in database schema."
+            if json_output:
+                handle_error(msg, json_mode=json_output, console=console)
+            else:
+                console.print(msg, style="yellow")
+            return
+
+        # Format and display property schema
+        output = OutputFormatter.format_property_schema(database, as_json=json_output)
+
+        if json_output:
+            OutputFormatter.output_json(output)
+        else:
+            console.print(output)
+
+    except ValueError as e:
+        handle_error(str(e), json_mode=json_output, console=console)
+    except Exception as e:
+        handle_error(f"Error: {e}", json_mode=json_output, console=console)
+
+
 # View management commands
 
 
@@ -1941,7 +2010,7 @@ _notion_completion() {
             opts="setup test"
             ;;
         db)
-            opts="list show create edit link entry-link"
+            opts="list show properties create edit link entry-link"
             ;;
         view)
             opts="list show update delete"
@@ -1995,6 +2064,7 @@ _notion() {
                     _values "db command" \\
                         "list[List databases]" \\
                         "show[Show database entries]" \\
+                        "properties[Show property schema]" \\
                         "create[Create new entry]" \\
                         "edit[Edit entries]" \\
                         "link[Get database link]" \\
@@ -2047,6 +2117,7 @@ complete -c notion -f -n "__fish_seen_subcommand_from auth" -a "test" -d "Test a
 # Database subcommands
 complete -c notion -f -n "__fish_seen_subcommand_from db" -a "list" -d "List databases"
 complete -c notion -f -n "__fish_seen_subcommand_from db" -a "show" -d "Show database entries"
+complete -c notion -f -n "__fish_seen_subcommand_from db" -a "properties" -d "Show property schema"
 complete -c notion -f -n "__fish_seen_subcommand_from db" -a "create" -d "Create new entry"
 complete -c notion -f -n "__fish_seen_subcommand_from db" -a "edit" -d "Edit entries"
 complete -c notion -f -n "__fish_seen_subcommand_from db" -a "link" -d "Get database link"
@@ -2083,7 +2154,7 @@ Register-ArgumentCompleter -CommandName notion -ScriptBlock {
 
     $commands = @{
         'auth' = @('setup', 'test')
-        'db' = @('list', 'show', 'create', 'edit', 'link', 'entry-link')
+        'db' = @('list', 'show', 'properties', 'create', 'edit', 'link', 'entry-link')
         'view' = @('list', 'show', 'update', 'delete')
         'page' = @('list', 'find', 'link', 'view', 'create')
         'completion' = @('install', 'show', 'uninstall')
