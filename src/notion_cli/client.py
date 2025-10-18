@@ -203,6 +203,106 @@ class NotionClientWrapper:
         except APIResponseError as e:
             raise Exception(f"Failed to create page: {e}")
 
+    def create_page_with_blocks(
+        self,
+        parent_id: str,
+        parent_type: str,
+        title: str | None = None,
+        properties: dict[str, Any] | None = None,
+        children: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
+        """Create a new page with blocks in either a database or page parent.
+
+        Args:
+            parent_id: ID of the parent (database or page)
+            parent_type: Either "database" or "page"
+            title: Page title (used for page parents or as fallback)
+            properties: Notion properties (for database parents, should include title)
+            children: List of Notion block objects
+
+        Returns:
+            Created page object
+        """
+        try:
+            # Prepare parent
+            if parent_type == "database":
+                parent = {"database_id": parent_id}
+            elif parent_type == "page":
+                parent = {"page_id": parent_id}
+            else:
+                raise ValueError(f"Invalid parent_type: {parent_type}. Must be 'database' or 'page'")
+
+            # Prepare properties
+            if properties:
+                page_properties = properties
+            else:
+                # Default to title property
+                page_properties = {
+                    "title": {"title": [{"text": {"content": title or "Untitled"}}]}
+                }
+
+            # Create page with optional children
+            payload: dict[str, Any] = {
+                "parent": parent,
+                "properties": page_properties,
+            }
+
+            if children:
+                payload["children"] = children
+
+            return self.client.pages.create(**payload)
+        except APIResponseError as e:
+            raise Exception(f"Failed to create page: {e}")
+
+    def get_object_type(self, object_id: str) -> str:
+        """Determine if an object ID is a database or page.
+
+        Args:
+            object_id: The Notion object ID
+
+        Returns:
+            Either "database" or "page"
+
+        Raises:
+            Exception: If the object cannot be retrieved or is neither a page nor database
+        """
+        try:
+            # Try to retrieve as a database first
+            db = self.client.databases.retrieve(database_id=object_id)
+            if db.get("object") == "database":
+                return "database"
+        except APIResponseError:
+            pass
+
+        try:
+            # Try to retrieve as a page
+            page = self.client.pages.retrieve(page_id=object_id)
+            if page.get("object") == "page":
+                # Check if it's actually a database (databases are also pages)
+                if page.get("parent", {}).get("type") == "database_id":
+                    # This is a page in a database, so the parent type would be "database"
+                    # But this object itself is a page
+                    return "page"
+                return "page"
+        except APIResponseError:
+            pass
+
+        raise Exception(f"Could not determine object type for ID: {object_id}")
+
+    def get_database_by_id(self, database_id: str) -> dict[str, Any]:
+        """Get a database by its ID.
+
+        Args:
+            database_id: The database ID
+
+        Returns:
+            Database object
+        """
+        try:
+            return self.client.databases.retrieve(database_id=database_id)
+        except APIResponseError as e:
+            raise Exception(f"Failed to retrieve database {database_id}: {e}")
+
     def update_page(self, page_id: str, properties: dict[str, Any]) -> dict[str, Any]:
         """Update an existing page."""
         try:

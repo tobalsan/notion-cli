@@ -1,5 +1,6 @@
 """Main CLI application entry point."""
 
+import json
 import shutil
 import traceback
 from pathlib import Path
@@ -1659,9 +1660,11 @@ def find_page(
 
 @page_app.command("create")
 def create_page(
-    filepath: Path = typer.Argument(
-        ...,
-        help="Path to the local file to be converted into a Notion page.",
+    filepath: Path | None = typer.Option(
+        None,
+        "--file",
+        "-f",
+        help="Path to markdown file to convert into page content",
         exists=True,
         file_okay=True,
         dir_okay=False,
@@ -1671,86 +1674,157 @@ def create_page(
         None,
         "--parent-name",
         "-n",
-        help="The name of the parent page.",
+        help="The name of the parent page or database.",
     ),
     parent_page_id: str = typer.Option(
         None,
         "--parent-id",
         "-p",
-        help="The ID of the parent page.",
+        help="The ID of the parent page or database.",
+    ),
+    blocks_json: str = typer.Option(
+        None,
+        "--blocks",
+        "-b",
+        help="JSON string defining page blocks/content (Notion block format)",
+    ),
+    properties_json: str = typer.Option(
+        None,
+        "--properties",
+        help="JSON string defining page properties (for database parents only)",
     ),
     json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
 ) -> None:
-    """Create a new page from a local file."""
+    """Create a new page from a file, JSON blocks, or with custom properties."""
     try:
+        # Validation: Check for mutually exclusive options
+        if filepath and blocks_json:
+            handle_error(
+                "Cannot specify both --file and --blocks. Use one or the other.",
+                json_mode=json_output,
+                console=console
+            )
+
         client = NotionClientWrapper()
 
-        # Determine the parent page
+        # Determine the parent (page or database)
         parent_id = None
+        parent_type = None
+
         if parent_page_id:
             parent_id = parent_page_id
-        elif parent_page_name:
+            # Determine if this is a database or page
             if json_output:
-                pages = client.get_page_by_name(parent_page_name)
+                parent_type = client.get_object_type(parent_id)
             else:
-                with console.status(f"Searching for parent page '{parent_page_name}'..."):
+                with console.status(f"Determining parent type for {parent_id}..."):
+                    parent_type = client.get_object_type(parent_id)
+        elif parent_page_name:
+            # Try to find as database first, then as page
+            database = resolve_database_name(parent_page_name, interactive=not json_output)
+            if database:
+                parent_id = database["id"]
+                parent_type = "database"
+            else:
+                # Try as page
+                if json_output:
                     pages = client.get_page_by_name(parent_page_name)
+                else:
+                    with console.status(f"Searching for parent '{parent_page_name}'..."):
+                        pages = client.get_page_by_name(parent_page_name)
 
-            if not pages:
-                handle_error(f"Parent page '{parent_page_name}' not found.", json_mode=json_output, console=console)
-            elif len(pages) > 1:
-                handle_error(
-                    f"Multiple pages found with the name '{parent_page_name}'. Please specify by ID.",
-                    json_mode=json_output,
-                    console=console
-                )
-            parent_id = pages[0]["id"]
+                if not pages:
+                    handle_error(
+                        f"Parent '{parent_page_name}' not found as database or page.",
+                        json_mode=json_output,
+                        console=console
+                    )
+                elif len(pages) > 1:
+                    handle_error(
+                        f"Multiple pages found with name '{parent_page_name}'. Use --parent-id.",
+                        json_mode=json_output,
+                        console=console
+                    )
+                parent_id = pages[0]["id"]
+                parent_type = "page"
         else:
             # Interactive parent selection not allowed in JSON mode
             if json_output:
                 handle_error(
-                    "Parent page must be specified with --parent-name or --parent-id in JSON mode",
+                    "Parent must be specified with --parent-name or --parent-id in JSON mode",
                     json_mode=json_output,
                     console=console
                 )
 
-            with console.status("Fetching pages..."):
+            # Interactive selection of parent
+            with console.status("Fetching pages and databases..."):
                 all_pages = client.search_pages()
+                all_databases = client.list_databases()
 
-            if not all_pages:
-                console.print("No pages found to select as a parent.", style="yellow")
-                # Ask if the user wants to create a top-level page
+            if not all_pages and not all_databases:
+                console.print("No pages or databases found to select as parent.", style="yellow")
                 if not typer.confirm("Create as a top-level page?"):
                     raise typer.Exit()
             else:
-                # Sort pages alphabetically by title before creating choices
-                all_pages.sort(key=lambda page: client._extract_page_title(page))
+                # Create combined list of choices
+                choices = []
 
-                page_choices = [
-                    (client._extract_page_title(page), page["id"]) for page in all_pages
-                ]
-                # Add an option for no parent
-                page_choices.insert(0, ("No parent (top-level page)", None))
+                # Add databases
+                for db in all_databases:
+                    db_title = ""
+                    if "title" in db and db["title"]:
+                        if isinstance(db["title"], list) and db["title"]:
+                            db_title = db["title"][0].get("plain_text", "Untitled")
+                    choices.append((f"[DB] {db_title}", db["id"], "database"))
+
+                # Add pages
+                for page in all_pages:
+                    page_title = client._extract_page_title(page)
+                    choices.append((f"[Page] {page_title}", page["id"], "page"))
+
+                # Sort by display name
+                choices.sort(key=lambda x: x[0])
+
+                # Add no parent option
+                choices.insert(0, ("No parent (top-level page)", None, None))
 
                 selected_title = questionary.autocomplete(
-                    "Select a parent page (start typing to filter):",
-                    choices=[title for title, _ in page_choices],
+                    "Select a parent (start typing to filter):",
+                    choices=[title for title, _, _ in choices],
                 ).ask()
 
                 if selected_title is None:
-                    console.print("No parent page selected. Aborting.", style="yellow")
+                    console.print("No parent selected. Aborting.", style="yellow")
                     raise typer.Exit()
 
-                # Find the id corresponding to the selected title
-                for title, pid in page_choices:
+                # Find the selection
+                for title, pid, ptype in choices:
                     if title == selected_title:
                         parent_id = pid
+                        parent_type = ptype
                         break
 
-        # Read and convert the file content
-        if json_output:
-            with open(filepath, encoding="utf-8") as f:
-                md_content = f.read()
+        # Validate properties option
+        if properties_json and parent_type != "database":
+            handle_error(
+                "--properties can only be used when creating pages in a database",
+                json_mode=json_output,
+                console=console
+            )
+
+        # Prepare content (children blocks)
+        children = None
+        page_title = "Untitled"
+
+        if filepath:
+            # Read and convert the file content
+            if json_output:
+                with open(filepath, encoding="utf-8") as f:
+                    md_content = f.read()
+            else:
+                with console.status("Converting file to Notion format..."):
+                    with open(filepath, encoding="utf-8") as f:
+                        md_content = f.read()
 
             # Extract title from the first H1, or use the filename
             page_title = filepath.stem
@@ -1761,31 +1835,88 @@ def create_page(
                 md_content = "\n".join(md_content.strip().splitlines()[1:])
 
             # Convert markdown to Notion blocks
-            children = parse_md(md_content)
-        else:
-            with console.status("Converting file to Notion format..."):
-                with open(filepath, encoding="utf-8") as f:
-                    md_content = f.read()
-
-                # Extract title from the first H1, or use the filename
-                page_title = filepath.stem
-                if md_content.strip().startswith("# "):
-                    title_line = md_content.strip().splitlines()[0]
-                    page_title = title_line.lstrip("# ").strip()
-                    # Remove title from content
-                    md_content = "\n".join(md_content.strip().splitlines()[1:])
-
-                # Convert markdown to Notion blocks
+            if json_output:
                 children = parse_md(md_content)
+            else:
+                with console.status("Parsing markdown content..."):
+                    children = parse_md(md_content)
+
+        elif blocks_json:
+            # Parse blocks from JSON
+            try:
+                children = json.loads(blocks_json)
+                if not isinstance(children, list):
+                    handle_error(
+                        "--blocks must be a JSON array of block objects",
+                        json_mode=json_output,
+                        console=console
+                    )
+            except json.JSONDecodeError as e:
+                handle_error(
+                    f"Invalid JSON in --blocks: {e}",
+                    json_mode=json_output,
+                    console=console
+                )
+
+        # Prepare properties
+        notion_properties = None
+
+        if properties_json:
+            # Parse properties from JSON
+            try:
+                user_properties = json.loads(properties_json)
+                if not isinstance(user_properties, dict):
+                    handle_error(
+                        "--properties must be a JSON object",
+                        json_mode=json_output,
+                        console=console
+                    )
+
+                # Get database schema to convert properties
+                if json_output:
+                    database = client.get_database_by_id(parent_id)
+                else:
+                    with console.status("Fetching database schema..."):
+                        database = client.get_database_by_id(parent_id)
+
+                db_properties = database.get("properties", {})
+
+                # Convert to Notion format
+                notion_properties = NotionDataConverter.convert_to_notion_properties(
+                    user_properties,
+                    db_properties,
+                )
+
+            except json.JSONDecodeError as e:
+                handle_error(
+                    f"Invalid JSON in --properties: {e}",
+                    json_mode=json_output,
+                    console=console
+                )
+        elif parent_type == "page" or not parent_type:
+            # For page parents, use title property
+            notion_properties = None  # Will use title parameter
 
         # Create the page
         if json_output:
-            result = client.create_page_in_page(parent_id, page_title, children)
+            result = client.create_page_with_blocks(
+                parent_id=parent_id,
+                parent_type=parent_type or "page",
+                title=page_title,
+                properties=notion_properties,
+                children=children,
+            )
         else:
-            with console.status(
-                f"Creating page in Notion...: {page_title}. Parent ID: {parent_id}",
-            ):
-                result = client.create_page_in_page(parent_id, page_title, children)
+            status_msg = f"Creating page '{page_title}' in "
+            status_msg += "database..." if parent_type == "database" else "page..."
+            with console.status(status_msg):
+                result = client.create_page_with_blocks(
+                    parent_id=parent_id,
+                    parent_type=parent_type or "page",
+                    title=page_title,
+                    properties=notion_properties,
+                    children=children,
+                )
 
         entry_id = result.get("id", "")
         entry_url = result.get("url", "")
@@ -1795,7 +1926,8 @@ def create_page(
                 "success": True,
                 "page_id": entry_id,
                 "url": entry_url,
-                "title": page_title
+                "title": page_title,
+                "parent_type": parent_type
             })
         else:
             console.print("✅ Page created successfully!", style="green")
