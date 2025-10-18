@@ -2019,6 +2019,255 @@ def get_page_link(
         handle_error(f"Error: {e}", json_mode=json_output, console=console)
 
 
+@page_app.command("update")
+def update_page(
+    page_name: str | None = typer.Argument(None, help="Page name to update"),
+    page_id: str = typer.Option(None, "--id", help="Page ID to update directly"),
+    filepath: Path | None = typer.Option(
+        None,
+        "--file",
+        "-f",
+        help="Path to markdown file to replace page content",
+        exists=True,
+        file_okay=True,
+        dir_okay=False,
+        readable=True,
+    ),
+    blocks_json: str = typer.Option(
+        None,
+        "--blocks",
+        "-b",
+        help="JSON string defining page blocks/content (Notion block format)",
+    ),
+    properties_json: str = typer.Option(
+        None,
+        "--properties",
+        help="JSON string defining page properties to update",
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
+) -> None:
+    """Update an existing page's content and/or properties."""
+    try:
+        # Validation: Check for mutually exclusive options
+        if filepath and blocks_json:
+            handle_error(
+                "Cannot specify both --file and --blocks. Use one or the other.",
+                json_mode=json_output,
+                console=console
+            )
+
+        # Validate that we have something to update
+        if not filepath and not blocks_json and not properties_json:
+            handle_error(
+                "Must specify at least one of: --file, --blocks, or --properties",
+                json_mode=json_output,
+                console=console
+            )
+
+        # Validate that exactly one of page_name or page_id is provided
+        if not page_name and not page_id:
+            handle_error(
+                "Either page name or --id must be provided",
+                json_mode=json_output,
+                console=console
+            )
+        if page_name and page_id:
+            handle_error(
+                "Cannot specify both page name and --id. Use one or the other.",
+                json_mode=json_output,
+                console=console
+            )
+
+        client = NotionClientWrapper()
+        page = None
+        page_id_to_update = page_id
+
+        # Resolve page by name if needed
+        if page_name:
+            if json_output:
+                pages = client.get_page_by_name(page_name, fuzzy=True)
+            else:
+                with console.status(f"Searching for page '{page_name}'..."):
+                    pages = client.get_page_by_name(page_name, fuzzy=True)
+
+            if not pages:
+                handle_error(
+                    f"No pages found matching '{page_name}'.",
+                    json_mode=json_output,
+                    console=console
+                )
+
+            # If multiple matches and not in JSON mode, let user select
+            if len(pages) > 1 and not json_output:
+                console.print(f"📄 Found {len(pages)} matching pages:", style="cyan")
+                for i, p in enumerate(pages[:10], 1):
+                    title = p.get("_title", "Untitled")
+                    match_score = p.get("_match_score", 0)
+                    console.print(f"  {i}. {title} (match: {match_score:.2f})", style="white")
+
+                try:
+                    choice = typer.prompt(
+                        f"\nSelect page to update (1-{min(len(pages), 10)})",
+                        type=int,
+                    )
+                    if 1 <= choice <= min(len(pages), 10):
+                        page = pages[choice - 1]
+                    else:
+                        handle_error("Invalid selection", json_mode=json_output, console=console)
+                except (typer.Abort, ValueError):
+                    console.print("❌ Operation cancelled", style="yellow")
+                    raise typer.Exit(1)
+            else:
+                page = pages[0]
+
+            page_id_to_update = page.get("id", "")
+
+        # Prepare content (children blocks)
+        children = None
+        page_title = None
+
+        if filepath:
+            # Read and convert the file content
+            if json_output:
+                with open(filepath, encoding="utf-8") as f:
+                    md_content = f.read()
+            else:
+                with console.status("Converting file to Notion format..."):
+                    with open(filepath, encoding="utf-8") as f:
+                        md_content = f.read()
+
+            # Extract title from the first H1 if present
+            if md_content.strip().startswith("# "):
+                title_line = md_content.strip().splitlines()[0]
+                page_title = title_line.lstrip("# ").strip()
+                # Remove title from content
+                md_content = "\n".join(md_content.strip().splitlines()[1:])
+
+            # Convert markdown to Notion blocks
+            if json_output:
+                children = parse_md(md_content)
+            else:
+                with console.status("Parsing markdown content..."):
+                    children = parse_md(md_content)
+
+        elif blocks_json:
+            # Parse blocks from JSON
+            try:
+                children = json.loads(blocks_json)
+                if not isinstance(children, list):
+                    handle_error(
+                        "--blocks must be a JSON array of block objects",
+                        json_mode=json_output,
+                        console=console
+                    )
+            except json.JSONDecodeError as e:
+                handle_error(
+                    f"Invalid JSON in --blocks: {e}",
+                    json_mode=json_output,
+                    console=console
+                )
+
+        # Prepare properties
+        notion_properties = None
+
+        if properties_json:
+            # Parse properties from JSON
+            try:
+                user_properties = json.loads(properties_json)
+                if not isinstance(user_properties, dict):
+                    handle_error(
+                        "--properties must be a JSON object",
+                        json_mode=json_output,
+                        console=console
+                    )
+
+                # Get page to determine if it's in a database
+                if json_output:
+                    current_page = client.get_page_by_id(page_id_to_update)
+                else:
+                    with console.status("Fetching page info..."):
+                        current_page = client.get_page_by_id(page_id_to_update)
+
+                parent = current_page.get("parent", {})
+                parent_type = parent.get("type")
+
+                if parent_type == "database_id":
+                    # Get database schema to convert properties
+                    database_id = parent.get("database_id")
+                    if json_output:
+                        database = client.get_database_by_id(database_id)
+                    else:
+                        with console.status("Fetching database schema..."):
+                            database = client.get_database_by_id(database_id)
+
+                    db_properties = database.get("properties", {})
+
+                    # Convert to Notion format
+                    notion_properties = NotionDataConverter.convert_to_notion_properties(
+                        user_properties,
+                        db_properties,
+                    )
+                else:
+                    # For non-database pages, properties should just be title
+                    notion_properties = user_properties
+
+            except json.JSONDecodeError as e:
+                handle_error(
+                    f"Invalid JSON in --properties: {e}",
+                    json_mode=json_output,
+                    console=console
+                )
+        elif page_title:
+            # If we extracted a title from markdown, update the title property
+            notion_properties = {
+                "title": {"title": [{"text": {"content": page_title}}]}
+            }
+
+        # Update the page
+        if json_output:
+            result = client.update_page_with_blocks(
+                page_id=page_id_to_update,
+                properties=notion_properties,
+                children=children,
+            )
+        else:
+            status_msg = "Updating page"
+            if children:
+                status_msg += " content"
+            if notion_properties:
+                status_msg += " and properties" if children else " properties"
+            status_msg += "..."
+
+            with console.status(status_msg):
+                result = client.update_page_with_blocks(
+                    page_id=page_id_to_update,
+                    properties=notion_properties,
+                    children=children,
+                )
+
+        entry_id = result.get("id", "")
+        entry_url = result.get("url", "")
+
+        if json_output:
+            OutputFormatter.output_json({
+                "success": True,
+                "page_id": entry_id,
+                "url": entry_url,
+            })
+        else:
+            console.print("✅ Page updated successfully!", style="green")
+            console.print(f"🆔 Page ID: {entry_id}")
+            if entry_url:
+                console.print(f"🔗 URL: {entry_url}")
+
+    except FileNotFoundError:
+        handle_error(f"File not found at: {filepath}", json_mode=json_output, console=console)
+    except Exception as e:
+        if not json_output:
+            traceback.print_exc()
+        handle_error(f"Error: {e}", json_mode=json_output, console=console)
+
+
 @page_app.command("view")
 def view_page(
     page_name: str | None = typer.Argument(None, help="Page name to view"),
@@ -2148,7 +2397,7 @@ _notion_completion() {
             opts="list show update delete"
             ;;
         page)
-            opts="list find link view create"
+            opts="list find link view create update"
             ;;
         completion)
             opts="install show uninstall"
@@ -2215,7 +2464,8 @@ _notion() {
                         "find[Find pages]" \\
                         "link[Get page link]" \\
                         "view[View page content]" \\
-                        "create[Create page]"
+                        "create[Create page]" \\
+                        "update[Update page]"
                     ;;
                 completion)
                     _values "completion command" \\
@@ -2267,6 +2517,7 @@ complete -c notion -f -n "__fish_seen_subcommand_from page" -a "find" -d "Find p
 complete -c notion -f -n "__fish_seen_subcommand_from page" -a "link" -d "Get page link"
 complete -c notion -f -n "__fish_seen_subcommand_from page" -a "view" -d "View page content"
 complete -c notion -f -n "__fish_seen_subcommand_from page" -a "create" -d "Create page"
+complete -c notion -f -n "__fish_seen_subcommand_from page" -a "update" -d "Update page"
 
 # Completion subcommands
 complete -c notion -f -n "__fish_seen_subcommand_from completion" -a "install" -d "Install completion"
@@ -2288,7 +2539,7 @@ Register-ArgumentCompleter -CommandName notion -ScriptBlock {
         'auth' = @('setup', 'test')
         'db' = @('list', 'show', 'properties', 'create', 'edit', 'link', 'entry-link')
         'view' = @('list', 'show', 'update', 'delete')
-        'page' = @('list', 'find', 'link', 'view', 'create')
+        'page' = @('list', 'find', 'link', 'view', 'create', 'update')
         'completion' = @('install', 'show', 'uninstall')
         'version' = @()
     }

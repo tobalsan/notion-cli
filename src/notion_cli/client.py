@@ -310,6 +310,50 @@ class NotionClientWrapper:
         except APIResponseError as e:
             raise Exception(f"Failed to update page {page_id}: {e}")
 
+    def update_page_with_blocks(
+        self,
+        page_id: str,
+        properties: dict[str, Any] | None = None,
+        children: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
+        """Update a page's properties and/or replace all its content blocks.
+
+        Args:
+            page_id: ID of the page to update
+            properties: Notion properties to update (optional)
+            children: List of Notion block objects to replace page content (optional)
+
+        Returns:
+            Updated page object
+        """
+        try:
+            # Update properties if provided
+            page = None
+            if properties:
+                page = self.client.pages.update(page_id=page_id, properties=properties)
+
+            # Replace content blocks if provided
+            if children:
+                # Delete all existing blocks
+                existing_blocks = self.get_page_blocks(page_id)
+                for block in existing_blocks:
+                    block_id = block.get("id")
+                    if block_id:
+                        self.client.blocks.delete(block_id=block_id)
+
+                # Append new blocks
+                if children:
+                    self.client.blocks.children.append(block_id=page_id, children=children)
+
+            # Return the updated page (or fetch it if we only updated blocks)
+            if page:
+                return page
+            else:
+                return self.get_page_by_id(page_id)
+
+        except APIResponseError as e:
+            raise Exception(f"Failed to update page {page_id}: {e}")
+
     def delete_page(self, page_id: str) -> dict[str, Any]:
         """Delete a page (archive it)."""
         try:
