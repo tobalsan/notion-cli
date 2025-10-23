@@ -65,6 +65,215 @@
   ```
 - `notion page link "NAME"` - Get page URL; opts: `--copy`, `--json`
 
+## Notion Block Format (for --blocks parameter)
+
+The `--blocks` parameter in `notion page create` and `notion page update` expects JSON in **Notion API block format**.
+
+### Block Structure
+All blocks must follow this structure:
+```json
+{
+  "object": "block",
+  "type": "<block_type>",
+  "<block_type>": {
+    "rich_text": [{"text": {"content": "text content"}}],
+    ...additional properties...
+  }
+}
+```
+
+### Common Block Types
+
+**Paragraph:**
+```json
+{
+  "object": "block",
+  "type": "paragraph",
+  "paragraph": {
+    "rich_text": [{"text": {"content": "This is a paragraph."}}]
+  }
+}
+```
+
+**Headings (heading_1, heading_2, heading_3):**
+```json
+{
+  "object": "block",
+  "type": "heading_2",
+  "heading_2": {
+    "rich_text": [{"text": {"content": "Section Title"}}]
+  }
+}
+```
+
+**Bulleted List Item:**
+```json
+{
+  "object": "block",
+  "type": "bulleted_list_item",
+  "bulleted_list_item": {
+    "rich_text": [{"text": {"content": "List item text"}}]
+  }
+}
+```
+
+**Numbered List Item:**
+```json
+{
+  "object": "block",
+  "type": "numbered_list_item",
+  "numbered_list_item": {
+    "rich_text": [{"text": {"content": "Numbered item"}}]
+  }
+}
+```
+
+**To-Do / Checkbox:**
+```json
+{
+  "object": "block",
+  "type": "to_do",
+  "to_do": {
+    "rich_text": [{"text": {"content": "Task description"}}],
+    "checked": false
+  }
+}
+```
+
+**Code Block:**
+```json
+{
+  "object": "block",
+  "type": "code",
+  "code": {
+    "rich_text": [{"text": {"content": "console.log('hello');"}}],
+    "language": "javascript"
+  }
+}
+```
+
+**Quote:**
+```json
+{
+  "object": "block",
+  "type": "quote",
+  "quote": {
+    "rich_text": [{"text": {"content": "Quoted text"}}]
+  }
+}
+```
+
+**Callout:**
+```json
+{
+  "object": "block",
+  "type": "callout",
+  "callout": {
+    "rich_text": [{"text": {"content": "Important note"}}],
+    "icon": {"emoji": "💡"}
+  }
+}
+```
+
+**Divider:**
+```json
+{
+  "object": "block",
+  "type": "divider",
+  "divider": {}
+}
+```
+
+### Complete Example
+```bash
+notion page create --parent-name "Projects" \
+  --properties '{"Name": {"title": [{"text": {"content": "Project Plan"}}]}}' \
+  --blocks '[
+    {
+      "object": "block",
+      "type": "heading_2",
+      "heading_2": {
+        "rich_text": [{"text": {"content": "Goals"}}]
+      }
+    },
+    {
+      "object": "block",
+      "type": "paragraph",
+      "paragraph": {
+        "rich_text": [{"text": {"content": "Complete the project by end of month."}}]
+      }
+    },
+    {
+      "object": "block",
+      "type": "heading_2",
+      "heading_2": {
+        "rich_text": [{"text": {"content": "Tasks"}}]
+      }
+    },
+    {
+      "object": "block",
+      "type": "to_do",
+      "to_do": {
+        "rich_text": [{"text": {"content": "Setup environment"}}],
+        "checked": false
+      }
+    },
+    {
+      "object": "block",
+      "type": "to_do",
+      "to_do": {
+        "rich_text": [{"text": {"content": "Write code"}}],
+        "checked": false
+      }
+    },
+    {
+      "object": "block",
+      "type": "to_do",
+      "to_do": {
+        "rich_text": [{"text": {"content": "Deploy"}}],
+        "checked": true
+      }
+    }
+  ]'
+```
+
+### Updating Page Blocks
+When updating with `notion page update --blocks`, all existing blocks are **replaced**:
+```bash
+notion page update "Page Name" --blocks '[
+  {
+    "object": "block",
+    "type": "paragraph",
+    "paragraph": {
+      "rich_text": [{"text": {"content": "New content replaces old."}}]
+    }
+  }
+]'
+```
+
+### Rich Text Formatting
+For styled text, use annotations:
+```json
+{
+  "object": "block",
+  "type": "paragraph",
+  "paragraph": {
+    "rich_text": [
+      {"text": {"content": "Normal text "}},
+      {
+        "text": {"content": "bold text"},
+        "annotations": {"bold": true}
+      },
+      {"text": {"content": " and "}},
+      {
+        "text": {"content": "italic text"},
+        "annotations": {"italic": true}
+      }
+    ]
+  }
+}
+```
+
 ## Other Commands
 - `notion completion install SHELL` - Install shell completion (bash/zsh)
 - `notion completion show SHELL` - View completion script
