@@ -6,6 +6,11 @@ import traceback
 from pathlib import Path
 from typing import Any
 
+try:
+    from importlib.resources import files
+except ImportError:
+    from importlib_resources import files  # type: ignore
+
 import questionary
 import typer
 from md2notionpage.core import parse_md
@@ -48,12 +53,12 @@ def main_callback(
 ) -> None:
     """Main callback to handle --reference flag."""
     if reference:
-        # Print reference.md content
-        reference_path = Path(__file__).parent.parent.parent / "reference.md"
-        if reference_path.exists():
-            console.print(reference_path.read_text())
+        # Print reference.md content using importlib.resources
+        try:
+            ref_text = files("notion_cli").joinpath("reference.md").read_text()
+            console.print(ref_text)
             raise typer.Exit()
-        else:
+        except (FileNotFoundError, ModuleNotFoundError):
             console.print("[red]Error: reference.md not found[/red]")
             raise typer.Exit(1)
 
