@@ -22,6 +22,7 @@ from .views import DatabaseView, ViewsManager
 
 app = typer.Typer(
     help="A CLI tool for Notion database operations using natural language",
+    add_completion=False,
 )
 auth_app = typer.Typer(help="Authentication commands")
 db_app = typer.Typer(help="Database commands")
@@ -36,6 +37,24 @@ app.add_typer(page_app, name="page")
 app.add_typer(completion_app, name="completion")
 
 console = Console()
+
+
+@app.callback(invoke_without_command=True)
+def main_callback(
+    ctx: typer.Context,
+    help: bool = typer.Option(None, "--help", "-h", is_flag=True, help="Show this help message"),
+) -> None:
+    """Main callback to intercept --help flag."""
+    if help or (ctx.invoked_subcommand is None and not ctx.args):
+        # Print reference.md content
+        reference_path = Path(__file__).parent.parent.parent / "reference.md"
+        if reference_path.exists():
+            console.print(reference_path.read_text())
+            raise typer.Exit()
+        else:
+            # Fall back to default help
+            console.print(ctx.get_help())
+            raise typer.Exit()
 
 
 def get_database_name_or_default(database_name: str | None) -> str:
@@ -1686,16 +1705,45 @@ def create_page(
         None,
         "--blocks",
         "-b",
-        help="JSON string defining page blocks/content (Notion block format)",
+        help='JSON array of Notion blocks. Example: \'[{"object":"block","type":"paragraph","paragraph":{"rich_text":[{"text":{"content":"Hello"}}]}}]\'',
     ),
     properties_json: str = typer.Option(
         None,
         "--properties",
-        help="JSON string defining page properties (for database parents only)",
+        help='JSON object with page properties. Example: \'{"Name":{"title":[{"text":{"content":"Page Title"}}]}}\'',
     ),
     json_output: bool = typer.Option(False, "--json", help="Output as JSON"),
 ) -> None:
-    """Create a new page from a file, JSON blocks, or with custom properties."""
+    """Create a new page from a file, JSON blocks, or with custom properties.
+
+    EXAMPLES:
+      # Create page from markdown file
+      notion page create --file notes.md --parent-name "Projects"
+
+      # Create page with title property (for database parents)
+      notion page create --parent-name "Tasks" \\
+        --properties '{"Name":{"title":[{"text":{"content":"New Task"}}]}}'
+
+      # Create page with content blocks
+      notion page create --parent-name "Notes" \\
+        --blocks '[
+          {"object":"block","type":"heading_2","heading_2":{"rich_text":[{"text":{"content":"Section"}}]}},
+          {"object":"block","type":"paragraph","paragraph":{"rich_text":[{"text":{"content":"Content here."}}]}}
+        ]'
+
+      # Create page with to-do items
+      notion page create --parent-name "Projects" \\
+        --blocks '[
+          {"object":"block","type":"to_do","to_do":{"rich_text":[{"text":{"content":"Task 1"}}],"checked":false}},
+          {"object":"block","type":"to_do","to_do":{"rich_text":[{"text":{"content":"Task 2"}}],"checked":true}}
+        ]'
+
+    BLOCK TYPES:
+      Common block types: paragraph, heading_1, heading_2, heading_3, bulleted_list_item,
+      numbered_list_item, to_do, code, quote, callout, divider
+
+      See examples/llm.md for comprehensive block format documentation.
+    """
     try:
         # Validation: Check for mutually exclusive options
         if filepath and blocks_json:
