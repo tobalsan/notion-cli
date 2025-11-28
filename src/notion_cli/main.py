@@ -42,19 +42,20 @@ console = Console()
 @app.callback(invoke_without_command=True)
 def main_callback(
     ctx: typer.Context,
-    help: bool = typer.Option(None, "--help", "-h", is_flag=True, help="Show this help message"),
+    reference: bool = typer.Option(
+        False, "--reference", "-r", is_flag=True, help="Show comprehensive reference documentation"
+    ),
 ) -> None:
-    """Main callback to intercept --help flag."""
-    if help or (ctx.invoked_subcommand is None and not ctx.args):
+    """Main callback to handle --reference flag."""
+    if reference:
         # Print reference.md content
         reference_path = Path(__file__).parent.parent.parent / "reference.md"
         if reference_path.exists():
             console.print(reference_path.read_text())
             raise typer.Exit()
         else:
-            # Fall back to default help
-            console.print(ctx.get_help())
-            raise typer.Exit()
+            console.print("[red]Error: reference.md not found[/red]")
+            raise typer.Exit(1)
 
 
 def get_database_name_or_default(database_name: str | None) -> str:
