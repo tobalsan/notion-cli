@@ -38,7 +38,7 @@ class NotionClientWrapper:
         """List all accessible databases."""
         try:
             response = self.client.search(
-                filter={"property": "object", "value": "database"},
+                filter={"property": "object", "value": "data_source"},
             )
             return response.get("results", [])
         except APIResponseError as e:
@@ -153,7 +153,11 @@ class NotionClientWrapper:
         start_cursor: str | None = None,
         page_size: int | None = None,
     ) -> dict[str, Any]:
-        """Query a database with optional filters and sorting."""
+        """Query a database with optional filters and sorting.
+
+        Note: In API version 2025-09-03+, this uses data_sources.query.
+        For single-source databases, database_id == data_source_id.
+        """
         try:
             query_params = {}
             if filter_conditions:
@@ -165,7 +169,9 @@ class NotionClientWrapper:
             if page_size:
                 query_params["page_size"] = page_size
 
-            return self.client.databases.query(database_id=database_id, **query_params)
+            # API version 2025-09-03+ uses data_sources.query
+            # For single-source databases, database_id works as data_source_id
+            return self.client.data_sources.query(data_source_id=database_id, **query_params)
         except APIResponseError as e:
             raise Exception(f"Failed to query database {database_id}: {e}")
 
